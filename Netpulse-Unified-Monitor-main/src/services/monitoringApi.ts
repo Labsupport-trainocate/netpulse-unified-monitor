@@ -1,0 +1,113 @@
+/**
+ * Client for the history / comparison / anomaly API (see src/server/monitoring.ts).
+ */
+import { publishAnomalyAlert } from './alertCenter';
+
+export type MetricKind = 'ping' | 'speed';
+export type RangeKey = '1h' | '6h' | '24h' | '7d' | '30d' | '90d';
+
+export interface MetricDef { label: string; unit: string; bad: 'high' | 'low'; decimals: number }
+export interface SeriesPoint { t: number; avg: number; min: number; max: number; n: number }
+export interface Anomaly {
+  id: string; t: number; kind: MetricKind; region: string; metric: string; label: string;
+  severity: 'warning' | 'critical'; type: 'spike' | 'drop' | 'threshold' | 'outage';
+  value: number; baselineMedian: number | null; deviationPct: number | null; message: string;
+  emailStatus?: string; acknowledged?: boolean;
+}
+export interface Stats { n: number; avg: number; min: number; max: number; p50: number; p5: number; p95: number }
+export interface CompareRow {
+  region: string; metric: string; label: string; unit: string;
+  current: Stats | null; previous: Stats | null;
+  worstNow: number | null; worstBefore: number | null;
+  deltaPct: number | null;
+  verdict: 'better' | 'worse' | 'stable' | 'no-data';
+}
+export interface HistoryResponse {
+  kind: MetricKind; metric: string; def: MetricDef; from: number; to: number; bucketMs: number; custom: boolean;
+  sampleCount: number; firstSampleAt: number | null;
+  limits: { normal: number; warning: number; critical: number } | null; // only for a single region
+  series: Record<string, SeriesPoint[]>; anomalies: Anomaly[];
+}
+export interface CompareResponse {
+  kind: MetricKind; mode: 'previous' | 'lastweek'; modeNote: string | null;
+  current: { from: number; to: number }; previous: { from: number; to: number }; rows: CompareRow[];
+  firstSampleAt: number | null; currentHasData: boolean; previousHasData: boolean;
+}
+export interface DetectionRow {
+  region: string; metric: string; label: string; unit: string; bad: 'high' | 'low';
+  samples: number; needed: number; state: 'no-data' | 'learning' | 'active';
+  normal: number | null; warningLimit: number | null; criticalLimit: number | null;
+  latest: number | null; latestAt: number | null; latestState: 'normal' | 'warning' | 'critical' | null;
+}
+
+/** The period the user picked: a preset like "24h", or an exact custom from/to (epoch ms). */
+export type Period = { type: 'preset'; range: RangeKey } | { type: 'custom'; from: number; to: number };
+const periodQs = (p: Period): Record<string, string> =>
+  p.type === 'preset' ? { range: p.range } : { from: String(p.from), to: String(p.to) };
+export interface MonitorConfig {
+  storage: { backend: 'redis' | 'file'; persistent: boolean; retentionDays: number; note?: string };
+  detector: { lookbackDays: number; minBaseline: number; zWarn: number; zCrit: number; minChangePct: number; lossWarnPct: number; lossCritPct: number };
+  metrics: Record<MetricKind, Record<string, MetricDef>>;
+  regions: string[];
+  email: { configured: boolean; apiKeySet: boolean; recipients: string[]; sender: string | null; minSeverity: 'warning' | 'critical'; cooldownMin: number };
+  daily?: { lastRunAt: number; overall: string; email: string } | null;
+  scheduler: { intervalMin: number | null; lastRunAt: number | null; lastResult: Array<{ region: string; status: string; detail?: string }> | null };
+}
+
+async function getJson<T>(url: string): Promise<T> {
+  const res = await fetch(url, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body?.ok === false) throw new Error(body?.error || `Request failed (HTTP ${res.status})`);
+  return body as T;
+}
+
+const qs = (o: Record<string, string>) => new URLSearchParams(o).toString();
+
+export const fetchConfig = () => getJson<MonitorConfig>('/api/monitor/config');
+export const fetchHistory = (kind: MetricKind, metric: string, period: Period, region: string) =>
+  getJson<HistoryResponse>(`/api/metrics/history?${qs({ kind, metric, region, ...periodQs(period) })}`);
+export const fetchCompare = (kind: MetricKind, period: Period, mode: 'previous' | 'lastweek', region: string) =>
+  getJson<CompareResponse>(`/api/metrics/compare?${qs({ kind, mode, region, ...periodQs(period) })}`);
+export const fetchAnomalies = (period: Period) =>
+  getJson<{ openCount: number; items: Anomaly[] }>(`/api/metrics/anomalies?${qs(periodQs(period))}`);
+export const fetchStatus = (kind: MetricKind, region: string) =>
+  getJson<{ rows: DetectionRow[] }>(`/api/metrics/status?${qs({ kind, region })}`);
+const browserTimeZone = (): string => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'; } catch { return 'UTC'; } };
+export const csvUrl = (kind: MetricKind, period: Period) => `/api/metrics/export.csv?${qs({ kind, tz: browserTimeZone(), ...periodQs(period) })}`;
+
+/** Asks the server to send a TEST e-mail to the configured recipients. Throws with the reason if it fails. */
+export async function sendTestEmail(): Promise<string[]> {
+  const res = await fetch('/api/monitor/test-email', { method: 'POST', signal: AbortSignal.timeout(20000) });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body?.ok === false) throw new Error(body?.error || `Request failed (HTTP ${res.status})`);
+  return body.sentTo as string[];
+}
+
+export async function acknowledgeAnomaly(id: string): Promise<void> {
+  const res = await fetch(`/api/metrics/anomalies/${encodeURIComponent(id)}/ack`, { method: 'POST' });
+  if (!res.ok) throw new Error(`Could not acknowledge (HTTP ${res.status})`);
+}
+
+/**
+ * Called after a ping / speed session finishes. The server stores the measurements in the long-term
+ * history and checks them for anomalies; anything it finds is shown immediately in the alert panel.
+ * Failures are ignored on purpose: monitoring must never break a test.
+ */
+export async function reportSessionToMonitoring(kind: MetricKind, session: unknown): Promise<void> {
+  try {
+    const res = await fetch('/api/metrics/ingest', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // per-packet details are not needed for history, so they are left out to keep the request small
+      body: JSON.stringify({ kind, session }, (key, value) => (key === 'packets' ? undefined : value)),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) return;
+    const body = await res.json();
+    for (const a of (body?.anomalies || []) as Anomaly[]) {
+      publishAnomalyAlert({ regionId: a.region, level: a.severity, title: `${a.label} anomaly`, message: a.message, emailStatus: a.emailStatus });
+    }
+  } catch (err) {
+    console.warn('[monitoring] could not report session:', err);
+  }
+}
