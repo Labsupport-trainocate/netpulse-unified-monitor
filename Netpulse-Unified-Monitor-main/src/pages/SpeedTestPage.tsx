@@ -634,8 +634,6 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
               <h3 className="text-sm font-bold text-white uppercase tracking-wider">
                 Session History
               </h3>
-              <span className="text-[11px] font-mono text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30 flex items-center gap-1.5 font-medium">
-              </span>
             </div>
             <div className="flex items-center gap-2">
               {historySessions.length > 0 && (
