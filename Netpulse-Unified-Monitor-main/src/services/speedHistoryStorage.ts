@@ -197,6 +197,7 @@ export async function persistSpeedSession(newSession: SpeedTestSession): Promise
         id: newSession.id,
         startedAt: newSession.startedAt,
         completedAt: newSession.completedAt || new Date().toISOString(),
+        source: newSession.source || null,
         regions: newSession.regions || {},
         summary: newSession.summary || null,
       };
