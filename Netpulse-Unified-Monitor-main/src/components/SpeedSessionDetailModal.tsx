@@ -1,6 +1,8 @@
 import React from 'react';
 import { type SpeedTestSession } from '../types/speedSession';
 import { formatSessionDateTime } from '../services/speedHistoryStorage';
+import { RouteStrip } from './RouteStrip';
+import { destinationLabel, type SourceView } from '../services/clientInfo';
 import {
   X,
   History,
@@ -26,6 +28,10 @@ export const SpeedSessionDetailModal: React.FC<SpeedSessionDetailModalProps> = (
   if (!session) return null;
 
   const dt = formatSessionDateTime(session.startedAt);
+  // Sessions saved before the source feature existed have none: say so instead of guessing.
+  const from: SourceView = session.source
+    ? { state: 'ready', source: session.source }
+    : { state: 'unavailable', reason: 'This test was saved before the test location was recorded.' };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-md animate-fade-in">
@@ -86,6 +92,22 @@ export const SpeedSessionDetailModal: React.FC<SpeedSessionDetailModalProps> = (
                 </span>
               )}
             </div>
+          </div>
+
+          {/* Where the test was run from */}
+          <div className="bg-slate-900/90 border border-emerald-500/30 rounded-xl p-4">
+            <div className="text-[10px] font-mono font-bold uppercase tracking-wider text-emerald-400">Test source · where this test was run from</div>
+            {session.source ? (
+              <div className="mt-1">
+                <div className="text-base font-black text-white">{session.source.label}</div>
+                <div className="text-[11px] font-mono text-slate-400 mt-0.5">
+                  {[session.source.isp, session.source.ip].filter(Boolean).join(' · ') || 'Network details not recorded'}
+                  {session.source.edited ? ' · location edited by the operator' : ''}
+                </div>
+              </div>
+            ) : (
+              <div className="mt-1 text-sm text-amber-300">Not recorded. This test was saved before the test location was captured.</div>
+            )}
           </div>
 
           {/* Aggregate KPI Grid */}
@@ -176,6 +198,15 @@ export const SpeedSessionDetailModal: React.FC<SpeedSessionDetailModalProps> = (
                       >
                         {isCompleted ? '✓ Completed' : '✕ Failed'}
                       </span>
+                    </div>
+
+                    <div className="mb-2">
+                      <RouteStrip
+                        compact
+                        from={from}
+                        toTitle={destinationLabel(reg.location, reg.country)}
+                        toSub={`${code}${reg.provider ? ` · ${reg.provider}` : ''}`}
+                      />
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 text-xs font-mono mt-2">
