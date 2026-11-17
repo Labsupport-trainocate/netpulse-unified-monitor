@@ -1,9 +1,20 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { UNIFIED_ENDPOINTS, UnifiedEndpoint } from '../config/endpoints';
 import { speedTestEngine } from '../services/speedTestEngine';
 import { LiveMetrics, SpeedTestResult, TestStage, RegionState } from '../types/speed';
 import { SpeedGauge } from '../components/SpeedGauge';
 import { RegionResultSection } from '../components/RegionResultSection';
+import { SourceBanner } from '../components/SourceBanner';
+import { RouteStrip } from '../components/RouteStrip';
+import {
+  detectSource,
+  readOverride,
+  writeOverride,
+  withOverride,
+  shortLabel,
+  destinationLabel,
+  type SourceView,
+} from '../services/clientInfo';
 import { CsvRangeButton } from '../components/CsvRangeButton';
 import { speedCsv, saveCsv, stamp, type SpeedCsvRow } from '../lib/csvDownload';
 import {
@@ -21,7 +32,7 @@ import {
   ChevronRight,
   Download,
 } from 'lucide-react';
-import { type SpeedTestSession } from '../types/speedSession';
+import { type SpeedTestSession, type SpeedSource } from '../types/speedSession';
 import {
   loadStoredSpeedSessions,
   loadAllSpeedSessions,
@@ -67,6 +78,60 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
   const [showHistory, setShowHistory] = useState<boolean>(false);
   const [selectedDetailSession, setSelectedDetailSession] = useState<SpeedTestSession | null>(null);
   const sessionStartTimeRef = useRef<string | null>(null);
+
+  // SOURCE of the test: where the person running it is connecting from (detected from their public IP).
+  const [detected, setDetected] = useState<SpeedSource | null>(null);
+  const [detecting, setDetecting] = useState<boolean>(true);
+  const [detectError, setDetectError] = useState<string | null>(null);
+  const [override, setOverride] = useState<string | null>(() => readOverride());
+  const [runSource, setRunSource] = useState<SourceView | null>(null); // the source of the test on screen (fixed when it starts)
+  const detectedRef = useRef<SpeedSource | null>(null);
+  const detectErrorRef = useRef<string | null>(null);
+  const detectPromiseRef = useRef<Promise<SpeedSource | null>>(Promise.resolve(null));
+  const sessionSourceRef = useRef<SpeedSource | null>(null);
+
+  const runDetect = useCallback((): Promise<SpeedSource | null> => {
+    setDetecting(true);
+    setDetectError(null);
+    const p = detectSource()
+      .then((src) => {
+        detectedRef.current = src;
+        detectErrorRef.current = null;
+        setDetected(src);
+        return src;
+      })
+      .catch((err: any) => {
+        detectedRef.current = null;
+        detectErrorRef.current = err?.message || 'Location lookup failed.';
+        setDetected(null);
+        setDetectError(detectErrorRef.current);
+        return null;
+      })
+      .finally(() => setDetecting(false));
+    detectPromiseRef.current = p;
+    return p;
+  }, []);
+
+  useEffect(() => {
+    void runDetect();
+  }, [runDetect]);
+
+  const blankSource = (): SpeedSource => ({
+    label: '', city: null, region: null, country: null, countryCode: null, ip: null, isp: null, asn: null,
+    edited: false, via: 'none', detectedAt: new Date().toISOString(),
+  });
+
+  // What the banner shows right now (live): the detection, with the operator's correction on top.
+  const liveView: SourceView = override
+    ? { state: 'ready', source: withOverride(detected ?? blankSource(), override) }
+    : detecting
+    ? { state: 'loading' }
+    : detected
+    ? { state: 'ready', source: withOverride(detected, null) }
+    : { state: 'unavailable', reason: detectError || 'Unknown error.' };
+
+  // The result cards show the source the test STARTED with, so they never change under finished results.
+  const shownSource: SourceView = runSource ?? liveView;
 
   // When "Session History" is opened, scroll down to the history panel.
   const historySectionRef = useRef<HTMLElement>(null);
@@ -116,6 +181,19 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
     setIsSequenceRunning(true);
     setHasCompletedRun(false);
     sessionStartTimeRef.current = new Date().toISOString();
+
+    // Fix the source for this run. If the lookup is still in flight, give it up to 4 s (tests take minutes anyway).
+    const found = await Promise.race([detectPromiseRef.current, new Promise<null>((r) => setTimeout(() => r(null), 4000))]);
+    const base = found ?? detectedRef.current;
+    const fixed = readOverride();
+    const snapshot: SpeedSource | null = fixed ? withOverride(base ?? blankSource(), fixed) : base ? withOverride(base, null) : null;
+    sessionSourceRef.current = snapshot;
+    setRunSource(
+      snapshot
+        ? { state: 'ready', source: snapshot }
+        : { state: 'unavailable', reason: detectErrorRef.current || 'The lookup did not answer in time.' }
+    );
+    if (isCancelledRef.current) return;
 
     setRegionStates(
       UNIFIED_ENDPOINTS.map((endpoint) => ({
@@ -263,6 +341,8 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
         serverCode: reg.endpoint.serverCode,
         name: reg.endpoint.name,
         country: reg.endpoint.country,
+        location: reg.endpoint.location,
+        provider: reg.endpoint.provider,
         status: reg.status,
         downloadMbps: reg.result?.downloadMbps ?? null,
         uploadMbps: reg.result?.uploadMbps ?? null,
@@ -276,6 +356,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
       id: `spd_${Date.now()}`,
       startedAt: sessionStartTimeRef.current || new Date().toISOString(),
       completedAt: new Date().toISOString(),
+      source: sessionSourceRef.current,
       regions: regionsMap,
       summary: {
         totalRegions: finalStates.length,
@@ -329,6 +410,10 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
       at: r.result?.timestamp ?? null,
       serverCode: r.endpoint.serverCode,
       name: `${r.endpoint.name} - ${r.endpoint.provider}`,
+      destination: destinationLabel(r.endpoint.location, r.endpoint.country),
+      sourceLocation: shownSource.state === 'ready' ? shownSource.source.label : '',
+      sourceIsp: shownSource.state === 'ready' ? shownSource.source.isp : null,
+      sourceIp: shownSource.state === 'ready' ? shownSource.source.ip : null,
       status: r.status === 'completed' ? 'Completed' : 'Failed',
       downloadMbps: r.result?.downloadMbps ?? null,
       uploadMbps: r.result?.uploadMbps ?? null,
@@ -342,7 +427,10 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
   };
   const downloadSessionCsv = (sess: SpeedTestSession) => {
     const rows: SpeedCsvRow[] = Object.values(sess.regions).map((r) => ({
-      serverCode: r.serverCode, name: r.name, status: r.status === 'completed' ? 'Completed' : r.status === 'failed' ? 'Failed' : 'Waiting',
+      serverCode: r.serverCode, name: r.name,
+      destination: destinationLabel(r.location, r.country),
+      sourceLocation: sess.source?.label ?? '', sourceIsp: sess.source?.isp ?? null, sourceIp: sess.source?.ip ?? null,
+      status: r.status === 'completed' ? 'Completed' : r.status === 'failed' ? 'Failed' : 'Waiting',
       downloadMbps: r.downloadMbps, uploadMbps: r.uploadMbps, pingMs: r.pingMs, jitterMs: r.jitterMs, note: r.errorMessage,
     }));
     saveCsv(`netpulse-speed-test-${stamp(sess.startedAt)}`, speedCsv(rows, sess.completedAt || sess.startedAt));
@@ -391,6 +479,18 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Where this test starts from */}
+      <SourceBanner
+        view={liveView}
+        locked={isSequenceRunning}
+        appliesToNext={hasCompletedRun}
+        onSaveLabel={(label) => {
+          writeOverride(label);
+          setOverride(label ? label.trim().slice(0, 80) : null);
+        }}
+        onRedetect={() => { void runDetect(); }}
+      />
 
       {/* Control Bar & Sequence Pipeline */}
       <section
@@ -688,6 +788,9 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
                       <span className="font-mono text-[11px] text-slate-400 mt-1 block">
                         ID: {sess.id} • 4 Regional Nodes Sequenced
                       </span>
+                      <span className="font-mono text-[11px] text-emerald-300/90 mt-0.5 block truncate max-w-md" title={sess.source?.label || undefined}>
+                        From: {sess.source ? shortLabel(sess.source) : 'not recorded'} <span className="text-slate-500">→</span> 4 data centers
+                      </span>
                     </div>
 
                     <div className="flex items-center gap-3">
@@ -767,7 +870,8 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
                   </span>
                 </h3>
                 <p className="text-xs text-slate-300 mt-1">
-                  All four regional LibreSpeed endpoints have been benchmarked.
+                  All four regional LibreSpeed endpoints have been benchmarked
+                  {shownSource.state === 'ready' ? <> from <strong className="text-emerald-300">{shownSource.source.label}</strong>.</> : '.'}
                 </p>
                 <div className="flex flex-wrap items-center gap-4 mt-3 text-xs font-mono">
                   <span className="text-emerald-400">
@@ -830,6 +934,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
               region={region}
               index={index}
               isActive={activeRegionIndex === index}
+              source={shownSource}
             />
           ))}
         </div>
