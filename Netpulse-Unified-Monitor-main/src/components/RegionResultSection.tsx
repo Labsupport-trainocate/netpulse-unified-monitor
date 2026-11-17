@@ -12,17 +12,22 @@ import {
   AlertTriangle,
   ShieldCheck,
 } from 'lucide-react';
+import { RouteStrip } from './RouteStrip';
+import { destinationLabel, type SourceView } from '../services/clientInfo';
 
 interface RegionResultSectionProps {
   region: RegionState;
   index: number;
   isActive: boolean;
+  /** where the person who launched the test is (the source of this result) */
+  source: SourceView;
 }
 
 export const RegionResultSection: React.FC<RegionResultSectionProps> = ({
   region,
   index,
   isActive,
+  source,
 }) => {
   const { endpoint, status, stage, liveMetrics, result, errorMessage } = region;
 
@@ -135,6 +140,16 @@ export const RegionResultSection: React.FC<RegionResultSectionProps> = ({
             </span>
           )}
         </div>
+      </div>
+
+      {/* Route: FROM the tester's location TO this data center */}
+      <div className="mt-3">
+        <RouteStrip
+          from={source}
+          toTitle={destinationLabel(endpoint.location, endpoint.country)}
+          toSub={`${endpoint.serverCode} · ${endpoint.provider}`}
+          accent={endpoint.accentColor}
+        />
       </div>
 
       {/* In-Test Progress Bar */}
