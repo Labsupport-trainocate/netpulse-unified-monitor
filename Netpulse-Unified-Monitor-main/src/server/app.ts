@@ -17,6 +17,7 @@ import { dispatchSpeedTestRoute } from './speedTestApi.js';
 import { buildAlert, sendCriticalAlertEmail, registerAlertRoutes } from './alerts.js';
 import { registerMonitoringRoutes, recordSamples, sampleFromPingResult, schedulerState } from './monitoring.js';
 import { runDailyCheck } from './dailyCheck.js';
+import { registerClientInfoRoutes } from './clientInfo.js';
 
 dotenv.config();
 
@@ -596,6 +597,9 @@ export function createApiApp(): Application {
   // Timeout alerts: POST /api/alerts/test-email (administrator key required)
   registerAlertRoutes(apiRouter);
 
+  // Speed test "source": where the person running the test is connecting from (GET /api/client-info)
+  registerClientInfoRoutes(apiRouter, getClientIp);
+
   // History, comparison, anomaly detection and scheduled monitoring
   registerMonitoringRoutes(apiRouter, {
     runProbes: runScheduledProbes,
@@ -1018,7 +1022,8 @@ export function createApiApp(): Application {
       req.path.startsWith('/agent') ||
       req.path.startsWith('/alerts') ||
       req.path.startsWith('/metrics') ||
-      req.path.startsWith('/monitor')
+      req.path.startsWith('/monitor') ||
+      req.path.startsWith('/client-info')
     ) {
       return apiRouter(req, res, next);
     }
