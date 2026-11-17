@@ -55,6 +55,12 @@ export interface SpeedCsvRow {
   at?: string | null;
   serverCode: string;
   name: string;
+  /** where the tested data center is, e.g. "Bangalore, Karnataka, India" */
+  destination?: string | null;
+  /** where the person who ran the test was connecting from */
+  sourceLocation?: string | null;
+  sourceIsp?: string | null;
+  sourceIp?: string | null;
   status: string;
   downloadMbps: number | null;
   uploadMbps: number | null;
@@ -65,10 +71,10 @@ export interface SpeedCsvRow {
 
 export function speedCsv(rows: SpeedCsvRow[], fallbackAt?: string | null): string[] {
   const tz = browserTimeZone();
-  const lines = [['Date', `Time (${zoneName(tz)})`, 'Region', 'Location', 'Status', 'Download (Mbps)', 'Upload (Mbps)', 'Ping (ms)', 'Jitter (ms)', 'Note'].map(cell).join(',')];
+  const lines = [['Date', `Time (${zoneName(tz)})`, 'Source Location (From)', 'Source Network', 'Source IP', 'Region (To)', 'Location', 'Destination', 'Status', 'Download (Mbps)', 'Upload (Mbps)', 'Ping (ms)', 'Jitter (ms)', 'Note'].map(cell).join(',')];
   for (const r of rows) {
     const t = dateTime(r.at || fallbackAt, tz);
-    lines.push([t.date, t.time, r.serverCode, r.name, r.status, num(r.downloadMbps), num(r.uploadMbps), num(r.pingMs), num(r.jitterMs), r.note || ''].map(cell).join(','));
+    lines.push([t.date, t.time, r.sourceLocation || 'Not recorded', r.sourceIsp || '', r.sourceIp || '', r.serverCode, r.name, r.destination || '', r.status, num(r.downloadMbps), num(r.uploadMbps), num(r.pingMs), num(r.jitterMs), r.note || ''].map(cell).join(','));
   }
   return lines;
 }
