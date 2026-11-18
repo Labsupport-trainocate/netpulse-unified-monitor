@@ -24,10 +24,11 @@ case "$URL" in https://*) ;; *) die "DASHBOARD_URL must start with https://" ;; 
 [ -n "$ROOT" ] || [ "$(id -u)" -eq 0 ] || die "Run this script with sudo."
 [ -f "$HERE/push-agent.cjs" ] || die "push-agent.cjs must be in the same folder as this script ($HERE)."
 
-command -v node >/dev/null 2>&1 || die "Node.js is not installed. Install Node.js 20 first (see the guide), then run this script again."
+command -v node >/dev/null 2>&1 || die "Node.js is not installed. Install Node.js 24 LTS first (see the guide), then run this script again."
 NODE_MAJOR="$(node -p "process.versions.node.split('.')[0]")"
 [ "$NODE_MAJOR" -ge 18 ] || die "Node.js 18 or newer is required (found $(node -v))."
 NODE_BIN="$(command -v node)"
+[ "$NODE_MAJOR" -ge 22 ] || echo "WARNING: Node.js $(node -v) no longer receives security fixes. Please upgrade this VM to Node.js 24 LTS."
 
 if [ -z "$ROOT" ] && ! command -v ping >/dev/null 2>&1; then
   info "ping is missing; installing iputils-ping"
