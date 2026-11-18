@@ -1,29 +1,23 @@
 /**
  * Unified Network Monitoring Application
- * Combines Network Speed Test & Ping Monitoring into a single secure platform.
+ * Combines Network Speed Test & Ping Monitoring into a single platform. Opens on the Monitoring page.
  */
 
 import React, { useState, useCallback, useRef } from 'react';
-import { AuthProvider, useAuth } from './context/AuthContext';
-import { LoginPage } from './pages/LoginPage';
 import { Navigation, NavTab } from './components/Navigation';
-import { UnifiedDashboardPage } from './pages/UnifiedDashboardPage';
 import { SpeedTestPage } from './pages/SpeedTestPage';
 import { PingMonitorPage } from './pages/PingMonitorPage';
-import { EndpointsPage } from './pages/EndpointsPage';
 import { MonitoringPage } from './pages/MonitoringPage';
-import { Loader2, Activity } from 'lucide-react';
 
 const MainAppContent: React.FC = () => {
-  const { user, loading } = useAuth();
-  const [currentTab, setCurrentTab] = useState<NavTab>('dashboard');
+  const [currentTab, setCurrentTab] = useState<NavTab>('monitoring');
   const [speedTestRunning, setSpeedTestRunning] = useState(false);
   const [pingTestRunning, setPingTestRunning] = useState(false);
   // "Done" = a test finished while the person was on another tab and has not been looked at yet.
   const [speedTestDone, setSpeedTestDone] = useState(false);
   const [pingTestDone, setPingTestDone] = useState(false);
 
-  const currentTabRef = useRef<NavTab>('dashboard');
+  const currentTabRef = useRef<NavTab>('monitoring');
   const speedWasRunningRef = useRef(false);
   const pingWasRunningRef = useRef(false);
 
@@ -55,30 +49,6 @@ const MainAppContent: React.FC = () => {
   const mountSpeed = currentTab === 'speedtest' || speedTestRunning || speedTestDone;
   const mountPing = currentTab === 'ping' || pingTestRunning || pingTestDone;
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-[#0b1329] flex flex-col items-center justify-center p-4">
-        <div className="flex flex-col items-center gap-3">
-          <div className="w-12 h-12 rounded-2xl bg-cyan-500/15 border border-cyan-400/30 text-cyan-400 flex items-center justify-center animate-pulse shadow-lg shadow-cyan-500/20">
-            <Activity className="w-6 h-6 animate-spin" />
-          </div>
-          <div className="text-sm font-bold text-white tracking-wide">
-            Verifying Operator Session...
-          </div>
-          <div className="text-xs text-slate-300 font-mono">
-            Firebase Authentication
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Unauthenticated user -> Login Page
-  if (!user) {
-    return <LoginPage />;
-  }
-
-  // Authenticated user -> Unified NOC Dashboard & Apps
   return (
     <div className="min-h-screen bg-[#0b1329] text-slate-100 flex flex-col selection:bg-cyan-500/30 selection:text-cyan-200">
       {/* Navigation Header */}
@@ -93,14 +63,6 @@ const MainAppContent: React.FC = () => {
 
       {/* Main App Body */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        {currentTab === 'dashboard' && (
-          <UnifiedDashboardPage
-            onSelectTab={selectTab}
-            speedTestRunning={speedTestRunning}
-            pingTestRunning={pingTestRunning}
-          />
-        )}
-
         {mountSpeed && (
           <div className={currentTab === 'speedtest' ? '' : 'hidden'}>
             <SpeedTestPage
@@ -124,10 +86,6 @@ const MainAppContent: React.FC = () => {
         )}
 
         {currentTab === 'monitoring' && <MonitoringPage />}
-
-        {currentTab === 'endpoints' && (
-          <EndpointsPage />
-        )}
       </main>
 
       {/* Unified Footer */}
@@ -144,9 +102,5 @@ const MainAppContent: React.FC = () => {
 };
 
 export default function App() {
-  return (
-    <AuthProvider>
-      <MainAppContent />
-    </AuthProvider>
-  );
+  return <MainAppContent />;
 }
