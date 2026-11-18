@@ -153,7 +153,7 @@ export const SpeedTestPage: React.FC<SpeedTestPageProps> = ({
     onTestRunningChange?.(isSequenceRunning);
   }, [isSequenceRunning, onTestRunningChange]);
 
-  // Load persistent speed test sessions from server API & Firestore across reloads and shared links
+  // Load persistent speed test sessions from the server API (if available) and this browser across reloads
   useEffect(() => {
     let isMounted = true;
     loadAllSpeedSessions().then((sessions) => {
