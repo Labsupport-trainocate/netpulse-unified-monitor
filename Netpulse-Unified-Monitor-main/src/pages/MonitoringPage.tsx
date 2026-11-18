@@ -4,11 +4,10 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarRange, CheckCircle2, Database,
-  Download, GraduationCap, Info, Loader2, Mail, RefreshCw, ShieldCheck, Timer, TrendingUp,
+  Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarRange, CheckCircle2, Download, GraduationCap, Info, Loader2, RefreshCw, ShieldCheck, TrendingUp,
 } from 'lucide-react';
 import {
-  acknowledgeAnomaly, csvUrl, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory, fetchStatus, sendTestEmail,
+  acknowledgeAnomaly, csvUrl, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory, fetchStatus,
   type Anomaly, type CompareResponse, type DetectionRow, type HistoryResponse, type MetricKind, type MonitorConfig,
   type Period, type RangeKey,
 } from '../services/monitoringApi';
@@ -212,21 +211,6 @@ export const MonitoringPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [testingEmail, setTestingEmail] = useState(false);
-  const [emailResult, setEmailResult] = useState<{ ok: boolean; text: string } | null>(null);
-
-  const runEmailTest = async () => {
-    setTestingEmail(true);
-    setEmailResult(null);
-    try {
-      const sentTo = await sendTestEmail();
-      setEmailResult({ ok: true, text: `Test e-mail sent to ${sentTo.join(', ')}. Check the inbox (and the spam folder).` });
-    } catch (e) {
-      setEmailResult({ ok: false, text: (e as Error).message });
-    } finally {
-      setTestingEmail(false);
-    }
-  };
 
   useEffect(() => {
     fetchConfig().then(setConfig).catch(() => undefined);
@@ -340,65 +324,11 @@ export const MonitoringPage: React.FC = () => {
               looks like, and unusual values raise an alert.
             </p>
           </div>
-          <div className="flex flex-wrap lg:flex-col gap-2 text-xs font-mono">
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.storage.persistent ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-amber-500/40 text-amber-300 bg-amber-500/10'}`}>
-              <Database className="w-3.5 h-3.5" />
-              {config ? `History: ${config.storage.backend === 'redis' ? 'Redis' : 'local file'} - keeps ${config.storage.retentionDays} days${config.storage.persistent ? '' : ' (temporary)'}` : 'History: checking...'}
-            </span>
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.daily?.lastRunAt || config?.scheduler.intervalMin || config?.scheduler.lastRunAt ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
-              <Timer className="w-3.5 h-3.5" />
-              {config?.daily?.lastRunAt ? `Daily auto check - last run ${fmtWhen(config.daily.lastRunAt)}` : config?.scheduler.intervalMin ? `Auto ping every ${config.scheduler.intervalMin} min` : config?.scheduler.lastRunAt ? `Last auto run ${fmtWhen(config.scheduler.lastRunAt)}` : 'Daily auto check: waiting for first run'}
-            </span>
-            <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${config?.email.configured ? 'border-emerald-500/40 text-emerald-300 bg-emerald-500/10' : 'border-slate-600 text-slate-300 bg-slate-800/60'}`}>
-              <Mail className="w-3.5 h-3.5" />
-              {config?.email.configured ? 'E-mail: daily summary + critical alerts' : 'E-mail alerts: not configured'}
-            </span>
-          </div>
         </div>
         {config?.storage.note && (
           <div className="mt-4"><Notice tone="warn">{config.storage.note}</Notice></div>
         )}
       </div>
-
-      {/* E-mail alerts */}
-      {config && (
-        <Card
-          title="E-mail alerts"
-          icon={<Mail className={`w-4 h-4 ${config.email.configured ? 'text-emerald-400' : 'text-slate-400'}`} />}
-          sub="One summary e-mail a day (everything is good / notes). A red critical alert is sent only when 5 or more ping requests in a row time out in a region."
-          right={
-            <button type="button" onClick={runEmailTest} disabled={!config.email.configured || testingEmail}
-              className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold border ${config.email.configured ? 'border-cyan-400/40 text-cyan-300 bg-cyan-500/15 hover:bg-cyan-500/25 cursor-pointer' : 'border-slate-700 text-slate-500 cursor-not-allowed'}`}>
-              {testingEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send test e-mail
-            </button>
-          }
-        >
-          <ul className="text-xs sm:text-sm text-slate-300 space-y-1.5">
-            <li className="flex items-start gap-2">
-              {config.email.apiKeySet ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" />}
-              <span>E-mail service key (<span className="font-mono">RESEND_API_KEY</span>): {config.email.apiKeySet ? 'set' : <b className="text-amber-300">missing</b>}</span>
-            </li>
-            <li className="flex items-start gap-2">
-              {config.email.recipients.length ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" />}
-              <span>Recipients (<span className="font-mono">ALERT_EMAIL_TO</span>): {config.email.recipients.length ? <span className="font-mono">{config.email.recipients.join(', ')}</span> : <b className="text-amber-300">none set</b>}</span>
-            </li>
-            <li className="flex items-start gap-2">
-              {config.email.sender ? <CheckCircle2 className="w-4 h-4 mt-0.5 text-emerald-400 shrink-0" /> : <AlertTriangle className="w-4 h-4 mt-0.5 text-amber-400 shrink-0" />}
-              <span>
-                Sender (<span className="font-mono">ALERT_EMAIL_FROM</span>):{' '}
-                {config.email.sender
-                  ? <span className="font-mono">{config.email.sender}</span>
-                  : <b className="text-amber-300">not set - Resend&apos;s shared test sender is used, which cannot deliver to company addresses. Set it to an address on your verified domain.</b>}
-              </span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Info className="w-4 h-4 mt-0.5 text-cyan-400 shrink-0" />
-              <span>Sends: one daily summary e-mail, plus a critical alert for 5 or more consecutive ping timeouts. Unusual values are listed in the daily summary only.</span>
-            </li>
-          </ul>
-          {emailResult && <div className="mt-3"><Notice tone={emailResult.ok ? 'ok' : 'error'}>{emailResult.text}</Notice></div>}
-        </Card>
-      )}
 
       {/* Controls */}
       <div className="bg-[#141e33] border border-slate-700/80 rounded-2xl p-4 space-y-3">
@@ -707,27 +637,6 @@ export const MonitoringPage: React.FC = () => {
           </div>
         )}
       </Card>
-
-      {/* How it works */}
-      {config && (
-        <Card title="How anomalies are detected" icon={<Info className="w-4 h-4 text-cyan-400" />}>
-          <ul className="text-xs sm:text-sm text-slate-300 leading-relaxed space-y-1.5 list-disc pl-5">
-            <li>
-              For every region and metric the system learns what is <b>normal</b>: the middle value of the last {config.detector.lookbackDays} days
-              (needs at least {config.detector.minBaseline} earlier results; until then the region is &quot;learning&quot;).
-            </li>
-            <li>
-              A new result is flagged when it is much worse than normal (higher latency, jitter or loss; lower speed), far outside the usual ups and
-              downs, <b>and</b> at least {config.detector.minChangePct}% different. It is <b>critical</b> when it is at least {config.detector.minChangePct * 2}% different and extremely far out.
-            </li>
-            <li>
-              Packet loss also has fixed limits: warning from {config.detector.lossWarnPct}%, critical from {config.detector.lossCritPct}%, and 100% is reported as an outage.
-            </li>
-            <li>Better-than-normal results (faster speed, lower latency) are never flagged.</li>
-            <li>Critical anomalies are e-mailed (at most one e-mail per region and metric every {config.email.cooldownMin} minutes). Every anomaly also appears here and as a pop-up after a test.</li>
-          </ul>
-        </Card>
-      )}
     </div>
   );
 };
