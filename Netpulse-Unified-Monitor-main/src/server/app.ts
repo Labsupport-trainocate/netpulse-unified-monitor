@@ -5,7 +5,6 @@
  * 1. Ping Monitoring API (ICMP 8.8.8.8 multi-region tests & push agent ingestion)
  * 2. Speed Test Relay API (/api/speedtest/relay streaming relay for LibreSpeed)
  * 3. Health & Regional Diagnostics (/api/health, /api/regions)
- * 4. Admin Account Verification (/api/auth/verify-admin-secret)
  * 5. Timeout alerts: in-app flag on every result, e-mail for long runs of timeouts (./alerts.ts)
  */
 
@@ -609,21 +608,6 @@ export function createApiApp(): Application {
   });
 
   /**
-   * Admin Account Setup Key Verification
-   * Allows the frontend admin setup modal to verify the administrative secret
-   */
-  apiRouter.post('/auth/verify-admin-secret', (req: Request, res: Response) => {
-    const secret = req.body?.secret?.toString()?.trim() || '';
-    const configuredSecret = process.env.ADMIN_SETUP_SECRET?.trim() || 'network-admin-2026';
-
-    if (secret && safeCompare(secret, configuredSecret)) {
-      res.json({ ok: true, verified: true });
-    } else {
-      res.status(401).json({ ok: false, verified: false, error: 'Invalid administrator secret key' });
-    }
-  });
-
-  /**
    * Root / Info route
    */
   apiRouter.get('/', (_req: Request, res: Response) => {
@@ -1017,7 +1001,6 @@ export function createApiApp(): Application {
     if (
       req.path.startsWith('/regions') ||
       req.path.startsWith('/speedtest') ||
-      req.path.startsWith('/auth') ||
       req.path.startsWith('/health') ||
       req.path.startsWith('/agent') ||
       req.path.startsWith('/alerts') ||
