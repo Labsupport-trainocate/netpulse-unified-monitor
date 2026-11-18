@@ -1,30 +1,26 @@
 /**
- * Persistent Multi-Device Session Storage for Speed Tests
+ * Session history storage for Speed Tests
  *
- * Implements triple-layer resilience:
- * 1. Server Persistence (/api/sessions/speed): Available across all browser tabs, devices, copied links, and page refreshes.
- * 2. Firestore Cloud Backup: Syncs to cloud database for authenticated NOC operators.
- * 3. Client LocalStorage Cache: Provides instant zero-latency UI rendering and offline fallback.
+ * Sessions are kept in this browser's localStorage (instant, works offline) and, when the deployment has a
+ * server-side session store (/api/sessions/speed), copied there as well. There is no account system: history
+ * saved in one browser is not visible from another browser or device.
  *
- * Deleting a session (or clearing the history) removes it from ALL three layers. If one layer cannot be
- * cleared, the functions below throw an error instead of pretending it worked, because the sessions that
- * remain would come back after a refresh.
+ * Deleting a session (or clearing the history) removes it from the server store (if any) and this browser.
+ * If the server refuses, the functions below throw an error instead of pretending it worked, because the
+ * sessions that remain would come back after a refresh.
  *
  * Designed to be 100% free with minimal storage footprint.
  */
 
 import { type SpeedTestSession } from '../types/speedSession';
 import { reportSessionToMonitoring } from './monitoringApi';
-import { db, auth } from '../lib/firebase';
-import { doc, setDoc, deleteDoc, getDocs, collection, query, orderBy, limit } from 'firebase/firestore';
 
 const STORAGE_KEY = 'noc_speed_sessions_history_v1';
 const SERVER_URL = '/api/sessions/speed';
-const FIRESTORE_COLLECTION = 'speedtest_sessions';
 const MAX_STORED_SESSIONS = 100;
 
 /**
- * Writes that are still in flight (server / Firestore). Clearing waits for them, so a session that was
+ * Writes that are still in flight (server). Clearing waits for them, so a session that was
  * saved a moment before "Clear All" cannot arrive afterwards and reappear.
  */
 const pendingWrites = new Set<Promise<unknown>>();
@@ -112,36 +108,14 @@ export async function fetchServerSpeedSessions(): Promise<SpeedTestSession[]> {
       return data.sessions;
     }
   } catch (err) {
-    // Non-fatal, will fall back to Firestore and localStorage
+    // Non-fatal, will fall back to localStorage
     console.warn('[SessionStorage] Server fetch skipped or offline:', err);
   }
   return [];
 }
 
 /**
- * Fetch sessions from Firestore if operator is signed in
- */
-export async function fetchFirestoreSpeedSessions(): Promise<SpeedTestSession[]> {
-  try {
-    if (!auth.currentUser) return [];
-    const q = query(collection(db, FIRESTORE_COLLECTION), orderBy('startedAt', 'desc'), limit(50));
-    const snap = await getDocs(q);
-    const sessions: SpeedTestSession[] = [];
-    snap.forEach((docSnap) => {
-      const data = docSnap.data();
-      if (data && data.id && data.startedAt) {
-        sessions.push(data as SpeedTestSession);
-      }
-    });
-    return sessions;
-  } catch (err) {
-    console.warn('[SessionStorage] Firestore fetch skipped:', err);
-    return [];
-  }
-}
-
-/**
- * Robust fetch combining Server, Firestore, and LocalStorage:
+ * Robust fetch combining the server store and LocalStorage:
  * - Loads remote data
  * - Merges with local cache
  * - Saves back to local cache
@@ -149,14 +123,8 @@ export async function fetchFirestoreSpeedSessions(): Promise<SpeedTestSession[]>
 export async function loadAllSpeedSessions(): Promise<SpeedTestSession[]> {
   const local = loadStoredSpeedSessions();
 
-  // Concurrently query Server and Firestore
-  const [serverSessions, firestoreSessions] = await Promise.all([
-    fetchServerSpeedSessions(),
-    fetchFirestoreSpeedSessions(),
-  ]);
-
-  const remote = mergeSessions(serverSessions, firestoreSessions);
-  const merged = mergeSessions(remote, local);
+  const serverSessions = await fetchServerSpeedSessions();
+  const merged = mergeSessions(serverSessions, local);
 
   if (merged.length > 0) {
     saveToLocalStorage(merged);
@@ -166,7 +134,7 @@ export async function loadAllSpeedSessions(): Promise<SpeedTestSession[]> {
 }
 
 /**
- * Persist a newly completed session across LocalStorage, Server API, and Firestore
+ * Persist a newly completed session in LocalStorage and (if available) the server API
  */
 export async function persistSpeedSession(newSession: SpeedTestSession): Promise<SpeedTestSession[]> {
   // 1. Local update
@@ -188,28 +156,6 @@ export async function persistSpeedSession(newSession: SpeedTestSession): Promise
     })
   );
 
-  // 3. Firestore update if authenticated
-  if (auth.currentUser) {
-    try {
-      const sessionDocRef = doc(db, FIRESTORE_COLLECTION, newSession.id);
-      // Clean payload for Firestore
-      const firestorePayload = {
-        id: newSession.id,
-        startedAt: newSession.startedAt,
-        completedAt: newSession.completedAt || new Date().toISOString(),
-        source: newSession.source || null,
-        regions: newSession.regions || {},
-        summary: newSession.summary || null,
-      };
-      trackWrite(
-        setDoc(sessionDocRef, firestorePayload).catch((err) => {
-          console.warn('[SessionStorage] Firestore doc write skipped:', err);
-        })
-      );
-    } catch (err) {
-      console.warn('[SessionStorage] Firestore sync error:', err);
-    }
-  }
 
   return updatedLocal;
 }
@@ -231,31 +177,8 @@ async function deleteOnServer(url: string): Promise<void> {
   }
 }
 
-function describeFirestoreError(err: any): string {
-  if (err?.code === 'permission-denied') {
-    return 'Firebase refused the delete (permission denied). Publish the latest firestore.rules in the Firebase Console.';
-  }
-  return err?.message || String(err);
-}
-
-/** Deletes every document of a Firestore collection, in small rounds, and checks that nothing is left. */
-async function deleteAllFirestoreDocs(collectionName: string): Promise<void> {
-  for (let round = 0; round < 50; round++) {
-    const snap = await getDocs(query(collection(db, collectionName), limit(100)));
-    if (snap.empty) return;
-    const results = await Promise.allSettled(snap.docs.map((d) => deleteDoc(d.ref)));
-    const deleted = results.filter((r) => r.status === 'fulfilled').length;
-    if (deleted === 0) {
-      const firstError = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
-      throw new Error(describeFirestoreError(firstError?.reason));
-    }
-  }
-  const left = await getDocs(query(collection(db, collectionName), limit(1)));
-  if (!left.empty) throw new Error('some sessions could not be deleted from Firestore');
-}
-
 /**
- * Delete a session across LocalStorage, Server API, and Firestore.
+ * Delete a session from the server store (if any) and this browser.
  * Throws if it could not be removed everywhere (the caller should then keep showing it).
  */
 export async function removeSpeedSession(sessionId: string): Promise<SpeedTestSession[]> {
@@ -268,14 +191,6 @@ export async function removeSpeedSession(sessionId: string): Promise<SpeedTestSe
     problems.push(`server: ${err?.message || err}`);
   }
 
-  if (auth.currentUser) {
-    try {
-      await deleteDoc(doc(db, FIRESTORE_COLLECTION, sessionId));
-    } catch (err: any) {
-      problems.push(describeFirestoreError(err));
-    }
-  }
-
   if (problems.length > 0) {
     throw new Error(`The session could not be deleted everywhere (${problems.join('; ')}).`);
   }
@@ -286,7 +201,7 @@ export async function removeSpeedSession(sessionId: string): Promise<SpeedTestSe
 }
 
 /**
- * Clear all sessions across LocalStorage, Server API, and Firestore.
+ * Clear all sessions from the server store (if any) and this browser.
  * Throws if something could not be cleared (the sessions that remain would come back after a refresh).
  */
 export async function clearAllSpeedSessions(): Promise<void> {
@@ -297,14 +212,6 @@ export async function clearAllSpeedSessions(): Promise<void> {
     await deleteOnServer(SERVER_URL);
   } catch (err: any) {
     problems.push(`server: ${err?.message || err}`);
-  }
-
-  if (auth.currentUser) {
-    try {
-      await deleteAllFirestoreDocs(FIRESTORE_COLLECTION);
-    } catch (err: any) {
-      problems.push(describeFirestoreError(err));
-    }
   }
 
   if (problems.length > 0) {
