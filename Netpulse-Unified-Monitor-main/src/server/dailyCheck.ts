@@ -232,40 +232,50 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
   ].join('\n');
 
   const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const regionMeta: Record<string, { flag: string; place: string }> = {
-    'IN-DC01': { flag: '🇮🇳', place: 'Bangalore · TATA' },
-    'IN-DC02': { flag: '🇮🇳', place: 'Bangalore · ACT' },
-    'LK-DC01': { flag: '🇱🇰', place: 'Sri Lanka' },
-    'SG-DC01': { flag: '🇸🇬', place: 'Singapore' },
+  const regionMeta: Record<string, { place: string }> = {
+    'IN-DC01': { place: 'Bangalore · TATA' },
+    'IN-DC02': { place: 'Bangalore · ACT' },
+    'LK-DC01': { place: 'Sri Lanka' },
+    'SG-DC01': { place: 'Singapore' },
   };
   const statusMeta = (status: Row['status']) => status === 'ok'
-    ? { label: 'HEALTHY', color: '#15803d', bg: '#dcfce7', border: '#86efac', summary: 'All checks completed normally' }
+    ? { label: 'HEALTHY', color: '#15803d', bg: '#dcfce7' }
     : status === 'note'
-      ? { label: 'REVIEW', color: '#b45309', bg: '#fef3c7', border: '#fcd34d', summary: 'One or more items need attention' }
-      : { label: 'CRITICAL', color: '#b91c1c', bg: '#fee2e2', border: '#fca5a5', summary: 'Critical ping failure detected' };
+      ? { label: 'REVIEW', color: '#b45309', bg: '#fef3c7' }
+      : { label: 'CRITICAL', color: '#b91c1c', bg: '#fee2e2' };
 
-  const metric = (label: string, value: string, hint: string) =>
-    `<td width="${label === 'Average ping' || label === 'Packet loss' ? '50%' : '33.33%'}" valign="top" style="padding:5px 4px"><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:12px 10px;min-height:67px"><div style="font-size:10px;letter-spacing:.5px;color:#64748b;font-weight:700;text-transform:uppercase">${label}</div><div style="font-size:20px;line-height:1.35;color:#0f172a;font-weight:700;margin-top:4px">${esc(value)}</div><div style="font-size:10px;color:#64748b;margin-top:2px">${hint}</div></div></td>`;
+  // Table-based circular gauges are used for broad email-client compatibility.
+  // Each metric is independent; the ring is a visual accent, not a fabricated percentage scale.
+  const metricCircle = (label: string, value: string, hint: string, ring: string, width: string) =>
+    `<td width="${width}" align="center" valign="top" style="padding:8px 3px 12px">` +
+      `<table role="presentation" align="center" width="126" height="126" cellspacing="0" cellpadding="0" style="width:126px;height:126px;border:5px solid ${ring};border-radius:50%;background:#ffffff;box-shadow:0 3px 0 #dbe5ee, inset 0 0 0 3px #f1f5f9;border-collapse:separate">` +
+        `<tr><td align="center" valign="middle" style="padding:7px 3px">` +
+          `<div style="font-size:9px;line-height:1.2;letter-spacing:.55px;color:#64748b;font-weight:700;text-transform:uppercase">${label}</div>` +
+          `<div style="font-size:16px;line-height:1.25;color:#0f172a;font-weight:800;margin-top:6px;white-space:nowrap">${esc(value)}</div>` +
+          `<div style="font-size:9px;line-height:1.2;color:#64748b;margin-top:5px">${hint}</div>` +
+        `</td></tr>` +
+      `</table>` +
+    `</td>`;
 
   const regionHeader = (r: Row) => {
-    const meta = regionMeta[r.region] || { flag: '🌐', place: REGION_NAMES[r.region] || '' };
+    const meta = regionMeta[r.region] || { place: REGION_NAMES[r.region] || '' };
     const st = statusMeta(r.status);
-    return `<tr><td style="padding:12px 13px 7px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td valign="middle"><div style="font-size:14px;font-weight:700;color:#0f172a">${meta.flag} &nbsp;${esc(r.region)}</div><div style="font-size:11px;color:#64748b;margin-top:3px">${esc(meta.place)}</div></td><td align="right" valign="middle"><span style="display:inline-block;padding:5px 9px;border-radius:20px;background:${st.bg};color:${st.color};font-size:10px;font-weight:700;letter-spacing:.4px">${st.label}</span></td></tr></table></td></tr>`;
+    return `<tr><td style="padding:14px 4px 5px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td valign="middle"><div style="font-size:15px;font-weight:800;color:#0f172a">${esc(r.region)}</div><div style="font-size:11px;color:#64748b;margin-top:3px">${esc(meta.place)}</div></td><td align="right" valign="middle"><span style="display:inline-block;padding:5px 10px;border-radius:20px;background:${st.bg};color:${st.color};font-size:10px;font-weight:800;letter-spacing:.4px">${st.label}</span></td></tr></table></td></tr>`;
   };
 
-  const pingCards = report.rows.map((r) => {
+  const pingCards = report.rows.map((r, index) => {
     const ping = r.ping.match(/avg\s+([\d.]+)\s*ms,\s*loss\s+([\d.]+)\s*%/i);
     const pingValue = ping ? `${ping[1]} ms` : 'No result';
     const lossValue = ping ? `${ping[2]}%` : '—';
-    return `<tr><td style="padding:6px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe4ef;border-radius:10px;background:#ffffff">${regionHeader(r)}<tr><td style="padding:0 9px 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metric('Average ping', pingValue, 'Lower is better')}${metric('Packet loss', lossValue, '0% is ideal')}</tr></table></td></tr></table></td></tr>`;
+    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Average ping', pingValue, 'Lower is better', '#16a6a1', '50%')}${metricCircle('Packet loss', lossValue, '0% is ideal', '#38a169', '50%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
   }).join('');
 
-  const speedCards = report.rows.map((r) => {
+  const speedCards = report.rows.map((r, index) => {
     const speed = r.speed.match(/down\s+([\d.]+)\s*\/\s*up\s+([\d.]+)\s*Mbps,\s*ping\s+([\d.]+)\s*ms/i);
     const downValue = speed ? `${speed[1]} Mbps` : 'No result';
     const upValue = speed ? `${speed[2]} Mbps` : 'No result';
     const speedPingValue = speed ? `${speed[3]} ms` : 'No result';
-    return `<tr><td style="padding:6px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe4ef;border-radius:10px;background:#ffffff">${regionHeader(r)}<tr><td style="padding:0 9px 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metric('Download', downValue, 'Download speed')}${metric('Upload', upValue, 'Upload speed')}${metric('Speed test ping', speedPingValue, 'Test latency')}</tr></table></td></tr></table></td></tr>`;
+    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Download', downValue, 'Download speed', '#2878d0', '33.33%')}${metricCircle('Upload', upValue, 'Upload speed', '#0d9488', '33.33%')}${metricCircle('Speed test ping', speedPingValue, 'Test latency', '#8b70cf', '33.33%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
   }).join('');
 
   const reviewItems = report.rows.flatMap((r) => r.notes.map((n) =>
@@ -282,8 +292,8 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
       : { icon: '!', heading: 'Critical issue detected' };
 
   const html =
-    `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:680px;margin:0 auto;background:#f1f5f9;color:#0f172a;padding:12px">` +
-    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">` +
+    `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:680px;margin:0 auto;background:#ffffff;color:#0f172a;padding:12px">` +
+    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;border-collapse:collapse">` +
     `<tr><td style="background:#0f4761;padding:19px 22px;color:#ffffff"><div style="font-size:11px;letter-spacing:1.2px;color:#cbdde5;font-weight:600">NETPULSE · NETWORK MONITOR</div><div style="font-size:21px;line-height:1.3;font-weight:700;margin-top:5px">Daily Network Check</div><div style="font-size:12px;color:#d5e5ec;margin-top:4px">${esc(day)} · 4 regional locations</div></td></tr>` +
     `<tr><td style="padding:17px 18px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${pill[0]};border-radius:9px"><tr><td width="42" valign="middle" align="center" style="font-size:23px;font-weight:700;color:${pill[1]};padding:12px 0">${summary.icon}</td><td style="padding:11px 12px 11px 0"><div style="font-size:14px;font-weight:700;color:${pill[1]}">${esc(summary.heading)}</div><div style="font-size:12px;line-height:1.5;color:#334155;margin-top:3px">${esc(intro)}</div></td></tr></table></td></tr>` +
     `<tr><td style="padding:8px 18px 4px"><div style="font-size:16px;font-weight:700;color:#0f172a">Ping monitoring</div><div style="font-size:11px;color:#64748b;margin-top:3px">Average response time and packet loss for each region</div></td></tr>` +
