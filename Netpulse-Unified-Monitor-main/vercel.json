@@ -12,10 +12,6 @@
     {
       "path": "/api/monitor/daily",
       "schedule": "30 0 * * *"
-    },
-    {
-      "path": "/api/monitor/monthly",
-      "schedule": "10 0 1 * *"
     }
   ],
   "rewrites": [
