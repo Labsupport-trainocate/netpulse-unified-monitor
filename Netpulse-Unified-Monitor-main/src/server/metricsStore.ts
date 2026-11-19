@@ -252,14 +252,3 @@ export function _resetForTests(): void {
   fileData = null;
   filePath = null;
 }
-
-
-/** Persisted monthly intelligence snapshots share the configured history backend. */
-export interface MonthlyReportRecord { id: string; month: string; generatedAt: number; [key: string]: any }
-export async function saveMonthlyReport(report: MonthlyReportRecord): Promise<void> {
-  const t = Date.parse(`${report.month}-01T00:00:00.000Z`);
-  await backend().add('monthly-reports', t, { ...report, t }, report.id);
-}
-export async function getMonthlyReports(from = 0, to = Date.now(), limit = 36): Promise<MonthlyReportRecord[]> {
-  return backend().range('monthly-reports', from, to, limit) as Promise<MonthlyReportRecord[]>;
-}
