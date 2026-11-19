@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { RouteStrip } from './RouteStrip';
 import { destinationLabel, type SourceView } from '../services/clientInfo';
+import { MetricVisualGrid } from './MetricVisuals';
 
 interface RegionResultSectionProps {
   region: RegionState;
@@ -385,6 +386,15 @@ export const RegionResultSection: React.FC<RegionResultSectionProps> = ({
           <p className="text-[10px] text-slate-400 font-medium truncate mt-0.5">RFC 3550</p>
         </div>
       </div>
+
+      {status === 'completed' && result && (
+        <MetricVisualGrid items={[
+          { label: 'Download throughput', value: result.downloadMbps, unit: 'Mbps', max: endpoint.serverCode.startsWith('LK') || endpoint.serverCode.startsWith('SG') ? 200 : 100 },
+          { label: 'Upload throughput', value: result.uploadMbps, unit: 'Mbps', max: endpoint.serverCode.startsWith('LK') || endpoint.serverCode.startsWith('SG') ? 200 : 100 },
+          { label: 'Round-trip ping', value: result.pingMs, unit: 'ms', max: 200, lowerBetter: true, goodMax: 60, warnMax: 120 },
+          { label: 'Jitter', value: result.jitterMs, unit: 'ms', max: 50, lowerBetter: true, goodMax: 5, warnMax: 15 },
+        ]} />
+      )}
 
       {/* Footer */}
       <div className="mt-3.5 pt-2.5 border-t border-slate-700/70 flex items-center justify-between text-xs text-slate-300 font-mono">
