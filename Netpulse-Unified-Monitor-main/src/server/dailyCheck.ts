@@ -244,39 +244,38 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
       ? { label: 'REVIEW', color: '#b45309', bg: '#fef3c7' }
       : { label: 'CRITICAL', color: '#b91c1c', bg: '#fee2e2' };
 
-  // Email-safe 3D gauges. Speed gauges use a liquid-style proportional fill;
-  // ping gauges use threshold colours. bgcolor provides a visible filled fallback
-  // in Outlook versions that do not support CSS gradients.
+  // Email-friendly ring gauges: only the outer ring carries the metric colour;
+  // the centre remains white. Unsupported clients fall back to a neutral ring,
+  // never a misleading fully-coloured dial.
   const metricCircle = (label: string, value: string, fill: string, width: string, progress = 100) => {
     const pct = Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0));
-    const innerBackground = `linear-gradient(to top, ${fill} 0%, ${fill} ${pct}%, #e8eef5 ${pct}%, #f8fafc 100%)`;
-    const outerBackground = 'linear-gradient(145deg,#ffffff 0%,#dbe5ef 48%,#9eafc2 100%)';
+    const degrees = (pct * 3.6).toFixed(1);
+    const ringBackground = `conic-gradient(from -90deg, ${fill} 0deg ${degrees}deg, #e8edf2 ${degrees}deg 360deg)`;
     return `<td width="${width}" align="center" valign="top" style="padding:8px 3px 12px">` +
-      `<table role="presentation" align="center" width="126" height="126" cellspacing="0" cellpadding="0" style="width:126px;height:126px;border:1px solid #91a4b9;border-radius:50%;background:${outerBackground};box-shadow:0 6px 0 #879bb1,0 9px 14px rgba(15,23,42,.24),inset 0 2px 5px rgba(255,255,255,.95);border-collapse:separate">` +
-        `<tr><td align="center" valign="middle" style="padding:9px">` +
-          `<table role="presentation" align="center" width="106" height="106" cellspacing="0" cellpadding="0" bgcolor="${fill}" style="width:106px;height:106px;border:1px solid #ffffff;border-radius:50%;background:${innerBackground};box-shadow:inset 0 4px 9px rgba(15,23,42,.22),0 1px 2px #ffffff;border-collapse:separate">` +
-            `<tr><td align="center" valign="middle" style="padding:5px 2px">` +
-              `<div style="font-size:10px;line-height:1.2;letter-spacing:.35px;color:#102033;font-weight:800;text-transform:uppercase;text-shadow:0 1px 1px rgba(255,255,255,.55)">${label}</div>` +
-              `<div style="font-size:16px;line-height:1.2;color:#081827;font-weight:800;margin-top:6px;white-space:nowrap;text-shadow:0 1px 1px rgba(255,255,255,.65)">${esc(value)}</div>` +
-            `</td></tr>` +
-          `</table>` +
-        `</td></tr>` +
-      `</table>` +
+      `<div style="width:126px;height:126px;padding:8px;box-sizing:border-box;border-radius:50%;background:#e8edf2;background:${ringBackground};border:1px solid #d5dee8">` +
+        `<table role="presentation" align="center" width="108" height="108" cellspacing="0" cellpadding="0" bgcolor="#ffffff" style="width:108px;height:108px;border:1px solid #ffffff;border-radius:50%;background:#ffffff;border-collapse:separate">` +
+          `<tr><td align="center" valign="middle" style="padding:5px 2px">` +
+            `<div style="font-size:10px;line-height:1.2;letter-spacing:.25px;color:#334155;font-weight:700;text-transform:uppercase">${label}</div>` +
+            `<div style="font-size:16px;line-height:1.2;color:#172033;font-weight:800;margin-top:6px;white-space:nowrap">${esc(value)}</div>` +
+          `</td></tr>` +
+        `</table>` +
+      `</div>` +
     `</td>`;
   };
   const pingFill = (raw: string) => {
     const n = Number(raw);
-    if (!Number.isFinite(n)) return '#94a3b8';
-    if (n > 120) return '#dc2626';
-    if (n >= 60) return '#facc15';
-    return '#22c55e';
+    if (!Number.isFinite(n)) return '#cbd5e1';
+    if (n > 140) return '#f0a3a8';
+    if (n >= 80) return '#f3d58a';
+    if (n < 60) return '#9bd8b2';
+    return '#cbd5e1';
   };
   const speedFill = (raw: string) => {
     const n = Number(raw);
-    if (!Number.isFinite(n)) return '#94a3b8';
-    if (n < 10) return '#dc2626';
-    if (n < 25) return '#facc15';
-    return '#22c55e';
+    if (!Number.isFinite(n)) return '#cbd5e1';
+    if (n < 10) return '#f0a3a8';
+    if (n < 25) return '#f3d58a';
+    return '#9bd8b2';
   };
   const speedCapacityMbps: Record<string, number> = { 'IN-DC01': 100, 'IN-DC02': 100, 'LK-DC01': 200, 'SG-DC01': 200 };
 
@@ -290,7 +289,7 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
     const ping = r.ping.match(/avg\s+([\d.]+)\s*ms,\s*loss\s+([\d.]+)\s*%/i);
     const pingValue = ping ? `${ping[1]} ms` : 'No result';
     const lossValue = ping ? `${ping[2]}%` : '—';
-    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Average ping', pingValue, ping ? pingFill(ping[1]) : '#94a3b8', '50%')}${metricCircle('Packet loss', lossValue, ping ? (Number(ping[2]) === 0 ? '#22c55e' : '#dc2626') : '#94a3b8', '50%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
+    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Average ping', pingValue, ping ? pingFill(ping[1]) : '#cbd5e1', '50%', ping ? (Number(ping[1]) / 200) * 100 : 0)}${metricCircle('Packet loss', lossValue, ping ? (Number(ping[2]) === 0 ? '#9bd8b2' : '#f0a3a8') : '#cbd5e1', '50%', ping ? (Number(ping[2]) / 10) * 100 : 0)}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
   }).join('');
 
   const speedCards = report.rows.map((r, index) => {
@@ -301,7 +300,7 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
     const capacity = speedCapacityMbps[r.region] || 100;
     const downloadPct = speed ? (Number(speed[1]) / capacity) * 100 : 0;
     const uploadPct = speed ? (Number(speed[2]) / capacity) * 100 : 0;
-    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Download', downValue, speed ? speedFill(speed[1]) : '#94a3b8', '33.33%', downloadPct)}${metricCircle('Upload', upValue, speed ? speedFill(speed[2]) : '#94a3b8', '33.33%', uploadPct)}${metricCircle('Ping', speedPingValue, speed ? pingFill(speed[3]) : '#94a3b8', '33.33%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
+    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Download', downValue, speed ? speedFill(speed[1]) : '#cbd5e1', '33.33%', downloadPct)}${metricCircle('Upload', upValue, speed ? speedFill(speed[2]) : '#cbd5e1', '33.33%', uploadPct)}${metricCircle('Ping', speedPingValue, speed ? pingFill(speed[3]) : '#cbd5e1', '33.33%', speed ? (Number(speed[3]) / 200) * 100 : 0)}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
   }).join('');
 
   const reviewItems = report.rows.flatMap((r) => r.notes.map((n) =>
