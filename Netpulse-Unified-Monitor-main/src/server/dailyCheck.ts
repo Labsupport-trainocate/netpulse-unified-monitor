@@ -244,23 +244,21 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
       ? { label: 'REVIEW', color: '#b45309', bg: '#fef3c7' }
       : { label: 'CRITICAL', color: '#b91c1c', bg: '#fee2e2' };
 
-  // Circular 3D-style gauges. Download/upload use the configured regional capacity as
-  // their 100% scale; other metrics keep a neutral ring because no safe threshold is defined.
-  // CSS conic-gradient is supported by modern mail clients; the base ring remains as a fallback.
-  const metricCircle = (label: string, value: string, hint: string, ring: string, width: string, progress?: number) => {
+  // Circular 3D-style gauges with a proportional liquid fill inside the inner dial.
+  // Download/upload fill is calculated against each region's configured Mbps capacity.
+  const metricCircle = (label: string, value: string, ring: string, width: string, progress?: number) => {
     const pct = progress === undefined ? null : Math.max(0, Math.min(100, progress));
-    const gaugeBackground = pct === null
-      ? `linear-gradient(145deg,#ffffff 5%,#f1f5f9 100%)`
-      : `conic-gradient(from -90deg, ${ring} 0%, ${ring} ${pct}%, #dbe5ee ${pct}%, #dbe5ee 100%)`;
+    const innerBackground = pct === null
+      ? 'linear-gradient(145deg,#ffffff 0%,#f1f5f9 100%)'
+      : `linear-gradient(to top, ${ring} 0%, ${ring} ${pct}%, #f1f5f9 ${pct}%, #ffffff 100%)`;
+    const outerBackground = 'linear-gradient(145deg,#ffffff 0%,#dbe5ef 48%,#aebdce 100%)';
     return `<td width="${width}" align="center" valign="top" style="padding:8px 3px 12px">` +
-      `<table role="presentation" align="center" width="126" height="126" cellspacing="0" cellpadding="0" style="width:126px;height:126px;border:1px solid #d7e2ee;border-radius:50%;background:${gaugeBackground};box-shadow:0 5px 0 #cbd5e1,0 8px 12px rgba(15,23,42,.12),inset 0 2px 4px rgba(255,255,255,.9);border-collapse:separate">` +
+      `<table role="presentation" align="center" width="126" height="126" cellspacing="0" cellpadding="0" style="width:126px;height:126px;border:1px solid #aebdce;border-radius:50%;background:${outerBackground};box-shadow:0 6px 0 #9aaabd,0 9px 14px rgba(15,23,42,.20),inset 0 2px 5px rgba(255,255,255,.95);border-collapse:separate">` +
         `<tr><td align="center" valign="middle" style="padding:9px">` +
-          `<table role="presentation" align="center" width="104" height="104" cellspacing="0" cellpadding="0" style="width:104px;height:104px;border:1px solid #e2e8f0;border-radius:50%;background:linear-gradient(145deg,#ffffff 0%,#f8fafc 100%);box-shadow:inset 0 3px 7px rgba(15,23,42,.10),0 1px 2px #ffffff;border-collapse:separate">` +
+          `<table role="presentation" align="center" width="106" height="106" cellspacing="0" cellpadding="0" style="width:106px;height:106px;border:1px solid #d1dbe6;border-radius:50%;background:${innerBackground};box-shadow:inset 0 3px 8px rgba(15,23,42,.18),0 1px 2px #ffffff;border-collapse:separate">` +
             `<tr><td align="center" valign="middle" style="padding:5px 2px">` +
-              `<div style="font-size:9px;line-height:1.2;letter-spacing:.45px;color:#64748b;font-weight:700;text-transform:uppercase">${label}</div>` +
-              `<div style="font-size:15px;line-height:1.2;color:#0f172a;font-weight:800;margin-top:5px;white-space:nowrap">${esc(value)}</div>` +
-              `<div style="font-size:9px;line-height:1.2;color:#64748b;margin-top:4px">${hint}</div>` +
-              `${pct === null ? '' : `<div style="font-size:9px;line-height:1.2;color:${ring};font-weight:800;margin-top:3px">${pct.toFixed(0)}%</div>`}` +
+              `<div style="font-size:10px;line-height:1.2;letter-spacing:.35px;color:#475569;font-weight:800;text-transform:uppercase">${label}</div>` +
+              `<div style="font-size:16px;line-height:1.2;color:#0f172a;font-weight:800;margin-top:6px;white-space:nowrap;text-shadow:0 1px 0 rgba(255,255,255,.75)">${esc(value)}</div>` +
             `</td></tr>` +
           `</table>` +
         `</td></tr>` +
@@ -279,7 +277,7 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
     const ping = r.ping.match(/avg\s+([\d.]+)\s*ms,\s*loss\s+([\d.]+)\s*%/i);
     const pingValue = ping ? `${ping[1]} ms` : 'No result';
     const lossValue = ping ? `${ping[2]}%` : '—';
-    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Average ping', pingValue, 'Lower is better', '#16a6a1', '50%')}${metricCircle('Packet loss', lossValue, '0% is ideal', '#38a169', '50%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
+    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Average ping', pingValue, '#16a6a1', '50%')}${metricCircle('Packet loss', lossValue, '#38a169', '50%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
   }).join('');
 
   const speedCards = report.rows.map((r, index) => {
@@ -290,7 +288,7 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
     const capacity = speedCapacityMbps[r.region] || 100;
     const downloadPct = speed ? (Number(speed[1]) / capacity) * 100 : 0;
     const uploadPct = speed ? (Number(speed[2]) / capacity) * 100 : 0;
-    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Download', downValue, `of ${capacity} Mbps`, '#2878d0', '33.33%', downloadPct)}${metricCircle('Upload', upValue, `of ${capacity} Mbps`, '#0d9488', '33.33%', uploadPct)}${metricCircle('Speed test ping', speedPingValue, 'Test latency', '#8b70cf', '33.33%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
+    return `<tr><td style="padding:0 0 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionHeader(r)}<tr><td><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metricCircle('Download', downValue, '#2878d0', '33.33%', downloadPct)}${metricCircle('Upload', upValue, '#0d9488', '33.33%', uploadPct)}${metricCircle('Speed test ping', speedPingValue, '#8b70cf', '33.33%')}</tr></table></td></tr><tr><td style="border-bottom:${index === report.rows.length - 1 ? '0' : '1px solid #e2e8f0'};font-size:1px;line-height:1px">&nbsp;</td></tr></table></td></tr>`;
   }).join('');
 
   const reviewItems = report.rows.flatMap((r) => r.notes.map((n) =>
@@ -311,7 +309,7 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
     `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;border-collapse:collapse">` +
     `<tr><td style="background:#0f4761;padding:19px 22px;color:#ffffff"><div style="font-size:11px;letter-spacing:1.2px;color:#cbdde5;font-weight:600">NETPULSE · NETWORK MONITOR</div><div style="font-size:21px;line-height:1.3;font-weight:700;margin-top:5px">Daily Network Check</div><div style="font-size:12px;color:#d5e5ec;margin-top:4px">${esc(day)} · 4 regional locations</div></td></tr>` +
     `<tr><td style="padding:17px 18px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${pill[0]};border-radius:9px"><tr><td width="42" valign="middle" align="center" style="font-size:23px;font-weight:700;color:${pill[1]};padding:12px 0">${summary.icon}</td><td style="padding:11px 12px 11px 0"><div style="font-size:14px;font-weight:700;color:${pill[1]}">${esc(summary.heading)}</div><div style="font-size:12px;line-height:1.5;color:#334155;margin-top:3px">${esc(intro)}</div></td></tr></table></td></tr>` +
-    `<tr><td style="padding:8px 18px 4px"><div style="font-size:16px;font-weight:700;color:#0f172a">Speed test</div><div style="font-size:11px;color:#64748b;margin-top:3px">Download and upload gauges are measured against each region's configured maximum capacity</div></td></tr>` +
+    `<tr><td style="padding:8px 18px 4px"><div style="font-size:16px;font-weight:700;color:#0f172a">Speed test</div></td></tr>` +
     `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${speedCards}</table></td></tr>` +
     `<tr><td style="padding:12px 18px 4px;border-top:1px solid #e2e8f0"><div style="font-size:16px;font-weight:700;color:#0f172a">Ping monitoring</div><div style="font-size:11px;color:#64748b;margin-top:3px">Average response time and packet loss for each region</div></td></tr>` +
     `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${pingCards}</table></td></tr>` +
