@@ -6,7 +6,6 @@ import {
 } from '../types/ping';
 import { UNIFIED_ENDPOINTS } from '../config/endpoints';
 import { StatusBadge } from './StatusBadge';
-import { MetricVisualGrid } from './MetricVisuals';
 import {
   Clock,
   Server,
@@ -227,20 +226,6 @@ export const RegionCard: React.FC<RegionCardProps> = ({
             </div>
           </div>
         </div>
-
-        <div className="mt-3 rounded-xl border border-slate-700/70 bg-[#0c1424]/70 p-3">
-          <div className="flex justify-between text-[10px] uppercase tracking-wider text-slate-400 mb-2"><span>Latency distribution</span><span>Min · Avg · Max</span></div>
-          <div className="relative h-2 rounded-full bg-slate-800 overflow-hidden">
-            {result.minLatencyMs !== null && result.maxLatencyMs !== null && result.avgLatencyMs !== null && <><div className="absolute h-full rounded-full bg-cyan-500/40" style={{left:`${Math.min(100,result.minLatencyMs/200*100)}%`,width:`${Math.max(1,Math.min(100,(result.maxLatencyMs-result.minLatencyMs)/200*100))}%`}}/><div className="absolute -top-0.5 w-2 h-3 rounded bg-cyan-300" style={{left:`${Math.min(98,result.avgLatencyMs/200*100)}%`}}/></>}
-          </div>
-          <div className="flex justify-between text-[10px] font-mono text-slate-300 mt-2"><span>Min {formatLatency(result.minLatencyMs)}</span><strong className="text-cyan-300">Avg {formatLatency(result.avgLatencyMs)}</strong><span>Max {formatLatency(result.maxLatencyMs)}</span></div>
-        </div>
-        <MetricVisualGrid items={[
-          { label: 'Average latency', value: result.avgLatencyMs, unit: 'ms', max: 200, lowerBetter: true, goodMax: 60, warnMax: 120 },
-          { label: 'Jitter', value: result.jitterMs, unit: 'ms', max: 50, lowerBetter: true, goodMax: 5, warnMax: 15 },
-          { label: 'Packet loss', value: result.packetLossPercent, unit: '%', max: 100, lowerBetter: true, goodMax: 0, warnMax: 1 },
-          { label: 'Latency range (max)', value: result.maxLatencyMs, unit: 'ms', max: 200, lowerBetter: true, goodMax: 60, warnMax: 120 },
-        ]} />
 
         {/* Error Details if any */}
         {result.errorDetails && (
