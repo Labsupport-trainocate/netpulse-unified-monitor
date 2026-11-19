@@ -225,7 +225,7 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
 
   const text = [
     `NETWORK MONITOR - DAILY CHECK (${day})`, '', title.toUpperCase(), intro, '',
-    ...report.rows.map((r) => `${r.region} (${REGION_NAMES[r.region] || ''}) - ${r.status === 'ok' ? 'OK' : r.status === 'note' ? 'REVIEW' : 'CRITICAL'}\n  Ping : ${r.ping}\n  Speed: ${r.speed}`),
+    ...report.rows.map((r) => `${r.region} (${REGION_NAMES[r.region] || ''}) - ${r.status === 'ok' ? 'HEALTHY' : r.status === 'note' ? 'REVIEW' : 'CRITICAL'}\n  PING MONITORING: ${r.ping}\n  SPEED TEST: ${r.speed}`),
     ...(notes.length ? ['', 'Items to review:', ...notes.map((n) => `- ${n}`)] : []),
     ...(dash ? ['', `Dashboard: ${dash}`] : []), '',
     'Automated daily report. A separate critical alert is sent when the configured consecutive ping-timeout threshold is reached.',
@@ -245,23 +245,35 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
       : { label: 'CRITICAL', color: '#b91c1c', bg: '#fee2e2', border: '#fca5a5', summary: 'Critical ping failure detected' };
 
   const metric = (label: string, value: string, hint: string) =>
-    `<td width="33.33%" valign="top" style="padding:5px 4px"><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px 9px;min-height:61px"><div style="font-size:10px;letter-spacing:.5px;color:#64748b;font-weight:700;text-transform:uppercase">${label}</div><div style="font-size:19px;line-height:1.35;color:#0f172a;font-weight:700;margin-top:3px">${esc(value)}</div><div style="font-size:10px;color:#64748b;margin-top:2px">${hint}</div></div></td>`;
+    `<td width="${label === 'Average ping' || label === 'Packet loss' ? '50%' : '33.33%'}" valign="top" style="padding:5px 4px"><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:9px;padding:12px 10px;min-height:67px"><div style="font-size:10px;letter-spacing:.5px;color:#64748b;font-weight:700;text-transform:uppercase">${label}</div><div style="font-size:20px;line-height:1.35;color:#0f172a;font-weight:700;margin-top:4px">${esc(value)}</div><div style="font-size:10px;color:#64748b;margin-top:2px">${hint}</div></div></td>`;
 
-  const regionCards = report.rows.map((r) => {
+  const regionHeader = (r: Row) => {
     const meta = regionMeta[r.region] || { flag: '🌐', place: REGION_NAMES[r.region] || '' };
     const st = statusMeta(r.status);
+    return `<tr><td style="padding:12px 13px 7px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td valign="middle"><div style="font-size:14px;font-weight:700;color:#0f172a">${meta.flag} &nbsp;${esc(r.region)}</div><div style="font-size:11px;color:#64748b;margin-top:3px">${esc(meta.place)}</div></td><td align="right" valign="middle"><span style="display:inline-block;padding:5px 9px;border-radius:20px;background:${st.bg};color:${st.color};font-size:10px;font-weight:700;letter-spacing:.4px">${st.label}</span></td></tr></table></td></tr>`;
+  };
+
+  const pingCards = report.rows.map((r) => {
     const ping = r.ping.match(/avg\s+([\d.]+)\s*ms,\s*loss\s+([\d.]+)\s*%/i);
-    const speed = r.speed.match(/down\s+([\d.]+)\s*\/\s*up\s+([\d.]+)\s*Mbps,\s*ping\s+([\d.]+)\s*ms/i);
     const pingValue = ping ? `${ping[1]} ms` : 'No result';
     const lossValue = ping ? `${ping[2]}%` : '—';
+    return `<tr><td style="padding:6px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe4ef;border-radius:10px;background:#ffffff">${regionHeader(r)}<tr><td style="padding:0 9px 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metric('Average ping', pingValue, 'Lower is better')}${metric('Packet loss', lossValue, '0% is ideal')}</tr></table></td></tr></table></td></tr>`;
+  }).join('');
+
+  const speedCards = report.rows.map((r) => {
+    const speed = r.speed.match(/down\s+([\d.]+)\s*\/\s*up\s+([\d.]+)\s*Mbps,\s*ping\s+([\d.]+)\s*ms/i);
     const downValue = speed ? `${speed[1]} Mbps` : 'No result';
     const upValue = speed ? `${speed[2]} Mbps` : 'No result';
-    const speedPingValue = speed ? `${speed[3]} ms` : '—';
-    const details = r.notes.length
-      ? `<div style="margin-top:10px;padding:10px 12px;background:${r.status === 'critical' ? '#fff1f2' : '#fffbeb'};border-left:3px solid ${st.color};border-radius:5px"><div style="font-size:11px;font-weight:700;color:${st.color};margin-bottom:4px">WHAT TO REVIEW</div>${r.notes.map((n) => `<div style="font-size:12px;line-height:1.5;color:#334155;padding:2px 0">• ${esc(n.replace(/^CRITICAL:\s*/i, ''))}</div>`).join('')}</div>`
-      : `<div style="margin-top:9px;font-size:11px;color:#15803d">✓ No unusual values reported for this region</div>`;
-    return `<tr><td style="padding:7px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #e2e8f0;border-radius:10px;background:#ffffff"><tr><td style="padding:13px 14px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td valign="middle"><div style="font-size:15px;font-weight:700;color:#0f172a">${meta.flag} &nbsp;${esc(r.region)}</div><div style="font-size:11px;color:#64748b;margin-top:3px">${esc(meta.place)}</div></td><td align="right" valign="middle"><span style="display:inline-block;padding:5px 9px;border-radius:20px;background:${st.bg};color:${st.color};font-size:10px;font-weight:700;letter-spacing:.4px">${st.label}</span></td></tr></table></td></tr><tr><td style="padding:0 10px 7px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metric('Average ping', pingValue, 'Lower is better')}${metric('Packet loss', lossValue, '0% is ideal')}${metric('Speed test ping', speedPingValue, 'Test latency')}</tr><tr>${metric('Download', downValue, 'Mbps')}${metric('Upload', upValue, 'Mbps')}<td width="33.33%" style="padding:5px 4px"><div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:11px 9px;min-height:61px"><div style="font-size:10px;letter-spacing:.5px;color:#64748b;font-weight:700">REGION RESULT</div><div style="font-size:13px;line-height:1.35;color:${st.color};font-weight:700;margin-top:7px">${st.label}</div><div style="font-size:10px;color:#64748b;margin-top:2px">Daily check</div></div></td></tr></table>${details}</td></tr></table></td></tr>`;
+    const speedPingValue = speed ? `${speed[3]} ms` : 'No result';
+    return `<tr><td style="padding:6px 0"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe4ef;border-radius:10px;background:#ffffff">${regionHeader(r)}<tr><td style="padding:0 9px 9px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${metric('Download', downValue, 'Download speed')}${metric('Upload', upValue, 'Upload speed')}${metric('Speed test ping', speedPingValue, 'Test latency')}</tr></table></td></tr></table></td></tr>`;
   }).join('');
+
+  const reviewItems = report.rows.flatMap((r) => r.notes.map((n) =>
+    `<tr><td style="padding:4px 0;font-size:12px;line-height:1.5;color:#334155"><strong>${esc(r.region)}:</strong> ${esc(n.replace(/^CRITICAL:\s*/i, ''))}</td></tr>`
+  ));
+  const reviewSection = reviewItems.length
+    ? `<tr><td style="padding:12px 18px 16px"><div style="font-size:14px;font-weight:700;color:#0f172a;margin-bottom:7px">Items to review</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#fffbeb;border:1px solid #fcd34d;border-radius:9px;padding:9px 12px">${reviewItems.join('')}</table></td></tr>`
+    : `<tr><td style="padding:10px 18px 15px;font-size:12px;color:#15803d">✓ No unusual values were reported across the regions.</td></tr>`;
 
   const summary = report.overall === 'good'
     ? { icon: '✓', heading: 'All regions are looking good' }
@@ -274,8 +286,11 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
     `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0">` +
     `<tr><td style="background:#0f4761;padding:19px 22px;color:#ffffff"><div style="font-size:11px;letter-spacing:1.2px;color:#cbdde5;font-weight:600">NETPULSE · NETWORK MONITOR</div><div style="font-size:21px;line-height:1.3;font-weight:700;margin-top:5px">Daily Network Check</div><div style="font-size:12px;color:#d5e5ec;margin-top:4px">${esc(day)} · 4 regional locations</div></td></tr>` +
     `<tr><td style="padding:17px 18px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${pill[0]};border-radius:9px"><tr><td width="42" valign="middle" align="center" style="font-size:23px;font-weight:700;color:${pill[1]};padding:12px 0">${summary.icon}</td><td style="padding:11px 12px 11px 0"><div style="font-size:14px;font-weight:700;color:${pill[1]}">${esc(summary.heading)}</div><div style="font-size:12px;line-height:1.5;color:#334155;margin-top:3px">${esc(intro)}</div></td></tr></table></td></tr>` +
-    `<tr><td style="padding:5px 18px 4px"><div style="font-size:14px;font-weight:700;color:#0f172a">Regional status</div><div style="font-size:11px;color:#64748b;margin-top:3px">A quick view of ping quality and speed-test performance</div></td></tr>` +
-    `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${regionCards}</table></td></tr>` +
+    `<tr><td style="padding:8px 18px 4px"><div style="font-size:16px;font-weight:700;color:#0f172a">Ping monitoring</div><div style="font-size:11px;color:#64748b;margin-top:3px">Average response time and packet loss for each region</div></td></tr>` +
+    `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${pingCards}</table></td></tr>` +
+    `<tr><td style="padding:12px 18px 4px;border-top:1px solid #e2e8f0"><div style="font-size:16px;font-weight:700;color:#0f172a">Speed test</div><div style="font-size:11px;color:#64748b;margin-top:3px">Download, upload and speed-test latency for each region</div></td></tr>` +
+    `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${speedCards}</table></td></tr>` +
+    reviewSection +
     (dash ? `<tr><td style="padding:16px 18px 18px"><a href="${esc(dash)}" style="display:inline-block;background:#0f4761;color:#ffffff;padding:11px 17px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:700">Open NetPulse dashboard</a></td></tr>` : '') +
     `<tr><td style="padding:13px 18px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:10.5px;line-height:1.55;color:#64748b">Automated daily report · Tests run once per scheduled check. A separate critical alert is sent when the configured consecutive ping-timeout threshold is reached.</td></tr>` +
     `</table></div>`;
