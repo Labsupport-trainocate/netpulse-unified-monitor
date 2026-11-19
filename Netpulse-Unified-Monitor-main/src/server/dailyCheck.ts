@@ -146,7 +146,7 @@ async function waitForScheduledPing(regions: string[], since: number, until: num
 /* ------------------------------ building the report ------------------------------ */
 
 type Overall = 'good' | 'notes' | 'critical';
-interface Row { region: string; ping: string; speed: string; status: 'ok' | 'note' | 'critical'; notes: string[] }
+interface Row { region: string; ping: string; speed: string; jitter: string; status: 'ok' | 'note' | 'critical'; notes: string[] }
 
 const f1 = (v: unknown) => (typeof v === 'number' ? v.toFixed(1) : 'n/a');
 
@@ -181,8 +181,10 @@ async function buildReport(since: number, pingRes: ProbeResult[], speed: Awaited
     // speed
     const ss = speed.samples.get(region);
     let spd = 'no result';
+    let jitter = 'n/a';
     if (ss) {
       spd = `down ${f1(ss.m.downloadMbps)} / up ${f1(ss.m.uploadMbps)} Mbps, ping ${f1(ss.m.pingMs)} ms`;
+      jitter = `${f1(ss.m.jitterMs)} ms`;
       if (ss.m.downloadMbps === undefined || ss.m.uploadMbps === undefined) notes.push('Speed test: download or upload could not be measured.');
     } else {
       notes.push(`Speed test did not complete: ${speed.errors.get(region) || 'no result'}.`);
@@ -198,7 +200,7 @@ async function buildReport(since: number, pingRes: ProbeResult[], speed: Awaited
       status = 'critical';
       notes.unshift(`CRITICAL: ${mark.maxRun} ping requests in a row timed out. The red critical alert e-mail was sent for this region.`);
     }
-    rows.push({ region, ping, speed: spd, status, notes });
+    rows.push({ region, ping, speed: spd, jitter, status, notes });
   }
   const overall: Overall = rows.some((r) => r.status === 'critical') ? 'critical' : rows.some((r) => r.status === 'note') ? 'notes' : 'good';
   return { rows, overall };
@@ -244,23 +246,67 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
       ? { label: 'REVIEW', color: '#b45309', bg: '#fef3c7' }
       : { label: 'CRITICAL', color: '#b91c1c', bg: '#fee2e2' };
 
-  // Email-friendly ring gauges: only the outer ring carries the metric colour;
-  // the centre remains white. Unsupported clients fall back to a neutral ring,
-  // never a misleading fully-coloured dial.
+  // Email-safe segmented ring gauges. Conic gradients are ignored by some
+  // email clients, so the progress ring is built from coloured table-cell dots.
+  // This keeps the centre white and displays the measured progress in Outlook too.
   const metricCircle = (label: string, value: string, fill: string, width: string, progress = 100) => {
     const pct = Math.max(0, Math.min(100, Number.isFinite(progress) ? progress : 0));
-    const degrees = (pct * 3.6).toFixed(1);
-    const ringBackground = `conic-gradient(from -90deg, ${fill} 0deg ${degrees}deg, #e8edf2 ${degrees}deg 360deg)`;
-    return `<td width="${width}" align="center" valign="top" style="padding:8px 3px 12px">` +
-      `<div style="width:126px;height:126px;padding:8px;box-sizing:border-box;border-radius:50%;background:#e8edf2;background:${ringBackground};border:1px solid #d5dee8">` +
-        `<table role="presentation" align="center" width="108" height="108" cellspacing="0" cellpadding="0" bgcolor="#ffffff" style="width:108px;height:108px;border:1px solid #ffffff;border-radius:50%;background:#ffffff;border-collapse:separate">` +
-          `<tr><td align="center" valign="middle" style="padding:5px 2px">` +
-            `<div style="font-size:10px;line-height:1.2;letter-spacing:.25px;color:#334155;font-weight:700;text-transform:uppercase">${label}</div>` +
-            `<div style="font-size:16px;line-height:1.2;color:#172033;font-weight:800;margin-top:6px;white-space:nowrap">${esc(value)}</div>` +
-          `</td></tr>` +
-        `</table>` +
-      `</div>` +
-    `</td>`;
+    const gridSize = 21;
+    const center = 10;
+    const ringCells: Array<{ row: number; col: number; angle: number }> = [];
+    for (let row = 0; row < gridSize; row++) {
+      for (let col = 0; col < gridSize; col++) {
+        const dx = col - center;
+        const dy = row - center;
+        const radius = Math.sqrt(dx * dx + dy * dy);
+        if (radius >= 10.0 && radius <= 11.2) {
+          const angle = (Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2);
+          ringCells.push({ row, col, angle });
+        }
+      }
+    }
+    const orderedRing = [...ringCells].sort((a, b) => a.angle - b.angle);
+    const filledCount = Math.round((pct / 100) * orderedRing.length);
+    const ringLookup = new Map(orderedRing.map((cell, index) => [`${cell.row},${cell.col}`, index]));
+    const centerMarkup =
+      `<table role="presentation" width="90" height="90" cellspacing="0" cellpadding="0" bgcolor="#ffffff" style="width:90px;height:90px;border:1px solid #ffffff;border-radius:50%;background:#ffffff;border-collapse:separate">` +
+        `<tr><td align="center" valign="middle" style="padding:5px 2px">` +
+          `<div style="font-size:10px;line-height:1.2;letter-spacing:.25px;color:#334155;font-weight:700;text-transform:uppercase">${label}</div>` +
+          `<div style="font-size:16px;line-height:1.2;color:#172033;font-weight:800;margin-top:6px;white-space:nowrap">${esc(value)}</div>` +
+        `</td></tr>` +
+      `</table>`;
+    const gridCell = (row: number, col: number) => {
+      const ringIndex = ringLookup.get(`${row},${col}`);
+      if (ringIndex !== undefined) {
+        const dotColor = ringIndex < filledCount ? fill : '#e8edf2';
+        return `<td width="6" height="6" align="center" valign="middle" style="width:6px;height:6px;padding:0;font-size:0;line-height:0"><table role="presentation" width="6" height="6" cellspacing="0" cellpadding="0"><tr><td width="6" height="6" bgcolor="${dotColor}" style="width:6px;height:6px;background:${dotColor};font-size:0;line-height:0;border-radius:50%">&nbsp;</td></tr></table></td>`;
+      }
+      return `<td width="6" height="6" style="width:6px;height:6px;padding:0;font-size:0;line-height:0"></td>`;
+    };
+    let gridRows = '';
+    for (let row = 0; row < gridSize; row++) {
+      let rowCells = '';
+      if (row === 3) {
+        rowCells += `<td colspan="15" rowspan="15" width="90" height="90" align="center" valign="middle" bgcolor="#ffffff" style="width:90px;height:90px;padding:0;background:#ffffff;border-radius:50%">${centerMarkup}</td>`;
+        for (let col = 0; col < 3; col++) rowCells += gridCell(row, col);
+        for (let col = 18; col < 21; col++) rowCells += gridCell(row, col);
+      } else if (row >= 4 && row <= 17) {
+        for (let col = 0; col < 3; col++) rowCells += gridCell(row, col);
+        for (let col = 18; col < 21; col++) rowCells += gridCell(row, col);
+      } else {
+        for (let col = 0; col < gridSize; col++) {
+          const ringIndex = ringLookup.get(`${row},${col}`);
+          if (ringIndex !== undefined) {
+            const dotColor = ringIndex < filledCount ? fill : '#e8edf2';
+            rowCells += `<td width="6" height="6" align="center" valign="middle" style="width:6px;height:6px;padding:0;font-size:0;line-height:0"><table role="presentation" width="6" height="6" cellspacing="0" cellpadding="0"><tr><td width="6" height="6" bgcolor="${dotColor}" style="width:6px;height:6px;background:${dotColor};font-size:0;line-height:0;border-radius:50%">&nbsp;</td></tr></table></td>`;
+          } else {
+            rowCells += `<td width="6" height="6" style="width:6px;height:6px;padding:0;font-size:0;line-height:0"></td>`;
+          }
+        }
+      }
+      gridRows += `<tr height="6" style="height:6px">${rowCells}</tr>`;
+    }
+    return `<td width="${width}" align="center" valign="top" style="padding:8px 3px 12px"><table role="presentation" align="center" width="126" height="126" cellspacing="0" cellpadding="0" style="width:126px;height:126px;border-collapse:collapse">${gridRows}</table></td>`;
   };
   const pingFill = (raw: string) => {
     const n = Number(raw);
@@ -316,18 +362,49 @@ function buildMail(report: { rows: Row[]; overall: Overall }, now: Date) {
       ? { icon: '!', heading: 'A few items need a look' }
       : { icon: '!', heading: 'Critical issue detected' };
 
+  const metricData = report.rows.map((r) => {
+    const p = r.ping.match(/avg\s+([\d.]+)\s*ms,\s*loss\s+([\d.]+)\s*%/i);
+    const s = r.speed.match(/down\s+([\d.]+)\s*\/\s*up\s+([\d.]+)\s*Mbps,\s*ping\s+([\d.]+)\s*ms/i);
+    return { row: r, avgPing: p ? Number(p[1]) : null, loss: p ? Number(p[2]) : null,
+      down: s ? Number(s[1]) : null, up: s ? Number(s[2]) : null, speedPing: s ? Number(s[3]) : null };
+  });
+  const normalCount = report.rows.filter((r) => r.status === 'ok').length;
+  const noteCount = report.rows.filter((r) => r.status === 'note').length;
+  const criticalCount = report.rows.filter((r) => r.status === 'critical').length;
+  const availableLoss = metricData.filter((x) => x.loss !== null);
+  const avgLoss = availableLoss.length ? availableLoss.reduce((a, x) => a + (x.loss || 0), 0) / availableLoss.length : null;
+  const delivery = avgLoss === null ? null : Math.max(0, 100 - avgLoss);
+  const maxMbps = Math.max(1, ...metricData.flatMap((x) => [x.down || 0, x.up || 0]));
+  const maxLatency = Math.max(1, ...metricData.flatMap((x) => [x.avgPing || 0, x.speedPing || 0]));
+  const bar = (value: number | null, max: number, color: string) => value === null
+    ? `<span style="color:#94a3b8;font-size:11px">Not available</span>`
+    : `<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="${Math.max(2, Math.round(value / max * 100))}%" height="11" bgcolor="${color}" style="height:11px;background:${color};border-radius:3px;font-size:0;line-height:0">&nbsp;</td><td></td></tr></table>`;
+  const panel = (heading: string, body: string) => `<td valign="top" width="50%" style="padding:7px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe7f2;border-radius:10px;background:#ffffff"><tr><td style="padding:13px">${heading}${body}</td></tr></table></td>`;
+  const monitoredSites = metricData.map(({ row: r }) => {
+    const st = statusMeta(r.status);
+    const dot = r.status === 'ok' ? '#22a765' : r.status === 'note' ? '#f0a000' : '#dc4444';
+    return `<td width="50%" valign="top" style="padding:5px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe7f2;border-radius:8px"><tr><td width="18" valign="top" style="padding:11px 0 9px 10px"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${dot}">&nbsp;</span></td><td style="padding:9px 4px"><div style="font-size:12px;font-weight:800;color:#10264b">${esc(r.region)}</div><div style="font-size:10px;color:#526b8e;margin-top:3px">${esc((regionMeta[r.region] || { place: '' }).place)}</div></td><td align="right" valign="middle" style="padding:7px 8px"><span style="display:inline-block;background:${st.bg};color:${st.color};font-size:9px;font-weight:800;padding:5px 7px;border-radius:6px">${st.label === 'HEALTHY' ? 'NORMAL' : st.label === 'REVIEW' ? 'WITH NOTES' : 'CRITICAL'}</span></td></tr></table></td>`;
+  });
+  const siteGrid = `<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr>${monitoredSites.slice(0, 2).join('')}</tr><tr>${monitoredSites.slice(2, 4).join('')}</tr></table>`;
+  const speedRows = metricData.map(({ row: r, down, up }) => `<tr><td width="92" valign="middle" style="padding:7px 6px 7px 0"><div style="font-size:11px;font-weight:800;color:#10264b">${esc(r.region)}</div><div style="font-size:9px;color:#526b8e">${esc((regionMeta[r.region] || { place: '' }).place)}</div></td><td style="padding:5px 0"><div style="font-size:9px;color:#0d9488;margin-bottom:3px">Download · ${down === null ? '—' : `${f1(down)} Mbps`}</div>${bar(down, maxMbps, '#18aaa4')}<div style="font-size:9px;color:#1685d8;margin:5px 0 3px">Upload · ${up === null ? '—' : `${f1(up)} Mbps`}</div>${bar(up, maxMbps, '#2995e8')}</td></tr>`).join('');
+  const latencyRows = metricData.map(({ row: r, avgPing, speedPing }) => `<tr><td width="92" valign="middle" style="padding:7px 6px 7px 0"><div style="font-size:11px;font-weight:800;color:#10264b">${esc(r.region)}</div><div style="font-size:9px;color:#526b8e">${esc((regionMeta[r.region] || { place: '' }).place)}</div></td><td style="padding:5px 0"><div style="font-size:9px;color:#2589db;margin-bottom:3px">Average · ${avgPing === null ? '—' : `${f1(avgPing)} ms`}</div>${bar(avgPing, maxLatency, '#3299e6')}<div style="font-size:9px;color:#d99016;margin:5px 0 3px">Speed test · ${speedPing === null ? '—' : `${f1(speedPing)} ms`}</div>${bar(speedPing, maxLatency, '#f2b43d')}<div style="font-size:9px;color:#64748b;margin-top:5px">Jitter · ${esc(r.jitter)}</div></td></tr>`).join('');
+  const reviewDetailed = report.rows.flatMap((r) => r.notes.map((n) => ({ region: r.region, note: n })));
+  const reviewBody = reviewDetailed.length ? reviewDetailed.map((x, i) => `<tr><td width="25" valign="top" style="padding:7px 4px"><span style="display:inline-block;width:20px;height:20px;text-align:center;line-height:20px;border-radius:50%;background:#f6b23e;color:#713f12;font-weight:800">${i + 1}</span></td><td style="padding:7px 4px;font-size:11px;line-height:1.45;color:#334e70"><strong style="color:#10264b">${esc(x.region)}</strong><br>${esc(x.note.replace(/^CRITICAL:\s*/i, ''))}</td></tr>`).join('') : `<tr><td style="padding:12px;font-size:11px;color:#15803d">No unusual values were reported across the regions.</td></tr>`;
+  const siteStatusBody = `<table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td width="50%" valign="middle"><div style="font-size:30px;line-height:1;font-weight:800;color:#10264b">${report.rows.length}</div><div style="font-size:10px;color:#526b8e">monitored sites</div></td><td valign="middle"><div style="font-size:11px;color:#334e70;margin:5px 0"><span style="color:#22a765">●</span> ${normalCount} normal</div><div style="font-size:11px;color:#334e70;margin:5px 0"><span style="color:#f0a000">●</span> ${noteCount} with notes</div>${criticalCount ? `<div style="font-size:11px;color:#b91c1c;margin:5px 0">● ${criticalCount} critical</div>` : ''}</td></tr></table>`;
+  const deliveryBody = `<div style="font-size:27px;line-height:1.1;font-weight:800;color:#10264b;margin-top:7px">${delivery === null ? '—' : `${f1(delivery)}%`}</div><div style="font-size:11px;color:#526b8e;margin-top:4px">${avgLoss === null ? 'Packet loss unavailable' : `${f1(avgLoss)}% average packet loss`}</div><div style="font-size:10px;color:#526b8e;margin-top:7px">${availableLoss.length} of 4 sites reported ping results</div>`;
+  const siteHeading = `<div style="font-size:14px;font-weight:800;color:#10264b;margin-bottom:9px">Monitored sites</div>`;
+  const statusHeading = `<div style="font-size:14px;font-weight:800;color:#10264b;margin-bottom:10px">Site status</div>`;
+  const deliveryHeading = `<div style="font-size:14px;font-weight:800;color:#10264b">Packet delivery</div>`;
   const html =
-    `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:680px;margin:0 auto;background:#ffffff;color:#0f172a;padding:12px">` +
-    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#ffffff;border-collapse:collapse">` +
-    `<tr><td style="background:#0f4761;padding:19px 22px;color:#ffffff"><div style="font-size:11px;letter-spacing:1.2px;color:#cbdde5;font-weight:600">NETPULSE · NETWORK MONITOR</div><div style="font-size:21px;line-height:1.3;font-weight:700;margin-top:5px">Daily Network Check</div><div style="font-size:12px;color:#d5e5ec;margin-top:4px">${esc(day)} · 4 regional locations</div></td></tr>` +
-    `<tr><td style="padding:17px 18px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:${pill[0]};border-radius:9px"><tr><td width="42" valign="middle" align="center" style="font-size:23px;font-weight:700;color:${pill[1]};padding:12px 0">${summary.icon}</td><td style="padding:11px 12px 11px 0"><div style="font-size:14px;font-weight:700;color:${pill[1]}">${esc(summary.heading)}</div><div style="font-size:12px;line-height:1.5;color:#334155;margin-top:3px">${esc(intro)}</div></td></tr></table></td></tr>` +
-    `<tr><td style="padding:8px 18px 4px"><div style="font-size:16px;font-weight:700;color:#0f172a">Speed test</div></td></tr>` +
-    `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${speedCards}</table></td></tr>` +
-    `<tr><td style="padding:12px 18px 4px;border-top:1px solid #e2e8f0"><div style="font-size:16px;font-weight:700;color:#0f172a">Ping monitoring</div><div style="font-size:11px;color:#64748b;margin-top:3px">Average response time and packet loss for each region</div></td></tr>` +
-    `<tr><td style="padding:0 18px 8px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${pingCards}</table></td></tr>` +
-    reviewSection +
-    (dash ? `<tr><td style="padding:16px 18px 18px"><a href="${esc(dash)}" style="display:inline-block;background:#0f4761;color:#ffffff;padding:11px 17px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:700">Open NetPulse dashboard</a></td></tr>` : '') +
-    `<tr><td style="padding:13px 18px;background:#f8fafc;border-top:1px solid #e2e8f0;font-size:10.5px;line-height:1.55;color:#64748b">Automated daily report · Tests run once per scheduled check. A separate critical alert is sent when the configured consecutive ping-timeout threshold is reached.</td></tr>` +
+    `<div style="font-family:Segoe UI,Arial,sans-serif;max-width:760px;margin:0 auto;background:#f4f8fc;color:#10264b;padding:12px">` +
+    `<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border-collapse:separate;border-spacing:0;background:#f4f8fc">` +
+    `<tr><td colspan="2" style="padding:12px 10px 16px"><table role="presentation" width="100%"><tr><td><div style="font-size:25px;font-weight:800;line-height:1.15;color:#10264b">Daily Network Check</div><div style="font-size:13px;color:#526b8e;margin-top:4px">${esc(day)}</div></td><td align="right" valign="top"><span style="display:inline-block;background:${pill[0]};color:${pill[1]};padding:8px 12px;border-radius:18px;font-size:11px;font-weight:800">${title.toUpperCase()}</span><div style="font-size:10px;color:#526b8e;margin-top:6px">${report.overall === 'critical' ? 'Critical issue detected.' : 'No critical issues detected.'}</div></td></tr></table></td></tr>` +
+    `<tr>${panel(statusHeading, siteStatusBody)}${panel(deliveryHeading, deliveryBody)}</tr>` +
+    `<tr><td colspan="2" style="padding:7px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #dbe7f2;border-radius:10px;background:#ffffff"><tr><td style="padding:13px">${siteHeading}${siteGrid}</td></tr></table></td></tr>` +
+    `<tr>${panel(`<div style="font-size:14px;font-weight:800;color:#10264b;margin-bottom:4px">Download vs Upload</div><div style="font-size:9px;color:#526b8e;margin-bottom:8px">Measured throughput by region</div>`, `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">${speedRows}</table>`)}${panel(`<div style="font-size:14px;font-weight:800;color:#10264b;margin-bottom:4px">Latency comparison</div><div style="font-size:9px;color:#526b8e;margin-bottom:8px">Average ping vs speed-test ping</div>`, `<table role="presentation" width="100%" cellspacing="0" cellpadding="0">${latencyRows}</table>`)}</tr>` +
+    `<tr><td colspan="2" style="padding:7px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #f5d27b;border-radius:10px;background:#fff9e9"><tr><td style="padding:13px"><div style="font-size:14px;font-weight:800;color:#10264b;margin-bottom:7px">Items to review</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0">${reviewBody}</table></td></tr></table></td></tr>` +
+    (dash ? `<tr><td colspan="2" style="padding:12px 7px"><a href="${esc(dash)}" style="display:inline-block;background:#0f4761;color:#ffffff;padding:10px 15px;border-radius:6px;text-decoration:none;font-size:11px;font-weight:700">Open NetPulse dashboard</a></td></tr>` : '') +
+    `<tr><td colspan="2" style="padding:12px 10px;background:#eaf1f8;border-top:1px solid #dbe7f2;font-size:10px;line-height:1.5;color:#526b8e">Automated daily report · Tests run once per scheduled check. A separate critical alert is sent when the configured consecutive ping-timeout threshold is reached.</td></tr>` +
     `</table></div>`;
   return { subject, html, text };
 }
