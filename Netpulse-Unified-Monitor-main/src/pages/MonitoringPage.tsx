@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, CalendarRange, CheckCircle2, Download, GraduationCap, Info, Loader2, RefreshCw, ShieldCheck, TrendingUp,
 } from 'lucide-react';
+import { MonthlyIntelligence } from '../components/MonthlyIntelligence';
 import {
   acknowledgeAnomaly, csvUrl, fetchAnomalies, fetchCompare, fetchConfig, fetchHistory, fetchStatus,
   type Anomaly, type CompareResponse, type DetectionRow, type HistoryResponse, type MetricKind, type MonitorConfig,
@@ -330,6 +331,8 @@ export const MonitoringPage: React.FC = () => {
         )}
       </div>
 
+      <MonthlyIntelligence />
+
       {/* Controls */}
       <div className="bg-[#141e33] border border-slate-700/80 rounded-2xl p-4 space-y-3">
         <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
@@ -477,6 +480,9 @@ export const MonitoringPage: React.FC = () => {
                 <Notice tone="ok">Detection is active for all regions.</Notice>
               )}
             </div>
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+              {metricStatus.map(r => <div key={`visual-${r.region}`} className="rounded-xl border border-slate-700 bg-slate-900/50 p-3"><div className="flex justify-between items-center gap-2"><strong className="text-xs" style={{color:REGION_COLORS[r.region]}}>{r.region}</strong><span className={`w-2 h-2 rounded-full ${r.latestState==='critical'?'bg-rose-400':r.latestState==='warning'?'bg-amber-400':r.state==='active'?'bg-emerald-400':'bg-slate-500'}`}/></div><div className="text-lg font-black text-white mt-2">{r.latest===null?'—':`${fmtNum(r.latest)} ${r.unit}`}</div><div className="text-[10px] text-slate-400">Latest · {r.latestState || r.state}</div><div className="h-1.5 rounded-full bg-slate-800 mt-2 overflow-hidden"><div className="h-full rounded-full" style={{width:`${r.samples && r.needed ? Math.min(100,r.samples/r.needed*100):0}%`,background:r.state==='active'?'#34d399':'#fbbf24'}}/></div><div className="text-[10px] text-slate-500 mt-1">Baseline {r.state==='active'?'ready':`${r.samples}/${r.needed} samples`}</div></div>)}
+            </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -603,6 +609,15 @@ export const MonitoringPage: React.FC = () => {
             )}
 
             {compareRows.length > 0 && (
+              <div className="rounded-xl border border-slate-700 bg-slate-950/30 p-3 space-y-3">
+                <div className="flex flex-wrap gap-4 text-[10px] text-slate-400"><span className="inline-flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm bg-slate-500"/> Earlier period</span><span className="inline-flex items-center gap-1.5"><i className="w-2.5 h-2.5 rounded-sm bg-cyan-400"/> Current period</span></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {compareRows.map(r => { const before=r.previous?.avg ?? 0; const now=r.current?.avg ?? 0; const max=Math.max(before,now,r.worstNow||0,0.001); return <div key={`chart-${r.region}-${r.metric}`} className="rounded-lg bg-slate-900/60 p-3"><div className="flex justify-between gap-2 text-[11px] mb-2"><strong style={{color:REGION_COLORS[r.region]}}>{r.region}</strong><span className="text-slate-300">{r.label}</span></div><div className="space-y-2"><div><div className="flex justify-between text-[10px] text-slate-400 mb-1"><span>Before</span><span className="font-mono">{r.previous?`${fmtNum(before)} ${r.unit}`:'—'}</span></div><div className="h-2 rounded-full bg-slate-800 overflow-hidden"><div className="h-full bg-slate-500 rounded-full" style={{width:`${r.previous?before/max*100:0}%`}}/></div></div><div><div className="flex justify-between text-[10px] text-slate-300 mb-1"><span>Now</span><span className="font-mono">{r.current?`${fmtNum(now)} ${r.unit}`:'—'}</span></div><div className="h-2 rounded-full bg-slate-800 overflow-hidden"><div className={`h-full rounded-full ${r.verdict==='better'?'bg-emerald-400':r.verdict==='worse'?'bg-rose-400':'bg-cyan-400'}`} style={{width:`${r.current?now/max*100:0}%`}}/></div></div></div></div>; })}
+                </div>
+              </div>
+            )}
+
+            {compareRows.length > 0 && (
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
@@ -617,7 +632,7 @@ export const MonitoringPage: React.FC = () => {
                     {compareRows.map((r) => (
                       <tr key={`${r.region}-${r.metric}`} className="border-b border-slate-800 text-slate-200">
                         <td className="py-2 pr-3 font-mono font-bold" style={{ color: REGION_COLORS[r.region] }}>{r.region}</td>
-                        <td className="pr-3">{r.label}</td>
+                        <td className="pr-3 min-w-[150px]"><div>{r.label}</div><div className="h-1.5 rounded-full bg-slate-800 mt-1 overflow-hidden"><div className={`h-full rounded-full ${r.verdict==='better'?'bg-emerald-400':r.verdict==='worse'?'bg-rose-400':'bg-cyan-400'}`} style={{width:`${r.current && r.previous ? Math.min(100,Math.max(5,100-Math.min(95,Math.abs(r.deltaPct||0)))):0}%`}}/></div></td>
                         <td className="pr-3 text-right font-mono">{r.previous ? `${fmtNum(r.previous.avg)} ${r.unit}` : <span className="text-slate-500">no data</span>}</td>
                         <td className="pr-3 text-right font-mono">{r.current ? `${fmtNum(r.current.avg)} ${r.unit}` : <span className="text-slate-500">no data</span>}</td>
                         <td className="pr-3 text-right font-mono">{r.worstNow !== null ? `${fmtNum(r.worstNow)} ${r.unit}` : '-'}</td>
