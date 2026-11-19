@@ -111,8 +111,3 @@ export async function reportSessionToMonitoring(kind: MetricKind, session: unkno
     console.warn('[monitoring] could not report session:', err);
   }
 }
-
-
-export interface MonthlyRegionResult { region: string; eligible: boolean; sampleCounts: { speed: number; ping: number }; score: number | null; rank: number | null; metrics: Record<string, number | null>; dimensions: Record<string, number | null>; strengths: string[]; weaknesses: string[]; recommendations: string[]; trend: 'improving' | 'degrading' | 'inconsistent' | 'insufficient-history' | 'stable' }
-export interface MonthlyReport { id: string; month: string; generatedAt: number; status: 'complete' | 'insufficient-data'; methodology: string; winner: string | null; weakest: string | null; consecutiveWinnerMonths: number; regions: MonthlyRegionResult[]; ranking: Array<{ region: string; score: number; rank: number }>; dataCoverage: { eligibleRegions: number; totalRegions: number } }
-export const fetchMonthlyReports = () => getJson<{ reports: MonthlyReport[]; storage?: { persistent: boolean; note?: string; backend: string } }>('/api/metrics/monthly');
