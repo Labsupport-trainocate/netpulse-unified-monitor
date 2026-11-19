@@ -15,10 +15,11 @@
 import type { Request, Response, Router } from 'express';
 import crypto from 'crypto';
 import {
-  addAnomaly, addSample, ackAnomaly, getAckedIds, getAnomalies, getSamples, pruneOld, storageInfo, retentionDays, firstSampleTime, REGIONS,
+  addAnomaly, addSample, ackAnomaly, getAckedIds, getAnomalies, getSamples, pruneOld, storageInfo, retentionDays, firstSampleTime, REGIONS, getMonthlyReports,
   type MetricKind, type Sample, type StoredAnomaly,
 } from './metricsStore.js';
 import { METRICS, alertLimits, baselineInfo, bucketSeries, comparePeriods, detectAnomalies, detectionStatus, detectorConfig } from './anomaly.js';
+import { generateAndStoreMonthlyReport, getStoredMonthlyReport } from './monthlyPerformance.js';
 import { sendEmailViaResend, alertRecipients, getLastEmailError, redisConfig, redisPipeline } from './alerts.js';
 
 const maskEmail = (e: string): string => {
@@ -45,6 +46,8 @@ export function samplesFromPingSession(session: any, source: Sample['source'] = 
     const m: Record<string, number> = {};
     if (finite(r.packetLossPercent, 0, 100)) m.packetLossPercent = r.packetLossPercent;
     if (finite(r.avgLatencyMs, 0, 60_000)) m.avgLatencyMs = r.avgLatencyMs;
+    if (finite(r.minLatencyMs, 0, 60_000)) m.minLatencyMs = r.minLatencyMs;
+    if (finite(r.maxLatencyMs, 0, 60_000)) m.maxLatencyMs = r.maxLatencyMs;
     if (finite(r.jitterMs, 0, 60_000)) m.jitterMs = r.jitterMs;
     if (Object.keys(m).length === 0) continue;
     out.push({ id: `ping:${rid}:${session.id || t}`, t, kind: 'ping', region: rid, source, m });
@@ -79,6 +82,8 @@ export function sampleFromPingResult(regionId: string, result: any, source: Samp
   if (finite(result.packetLossPercent, 0, 100)) m.packetLossPercent = result.packetLossPercent;
   else if (finite(result.failedRequests, 0, 1000)) m.packetLossPercent = Math.round((result.failedRequests / result.requestsSent) * 1000) / 10;
   if (finite(result.avgLatencyMs, 0, 60_000)) m.avgLatencyMs = result.avgLatencyMs;
+  if (finite(result.minLatencyMs, 0, 60_000)) m.minLatencyMs = result.minLatencyMs;
+  if (finite(result.maxLatencyMs, 0, 60_000)) m.maxLatencyMs = result.maxLatencyMs;
   if (finite(result.jitterMs, 0, 60_000)) m.jitterMs = result.jitterMs;
   if (Object.keys(m).length === 0) return null;
   return { id: `ping:${regionId}:sched_${t}`, t, kind: 'ping', region: regionId, source, m };
@@ -378,4 +383,28 @@ export function registerMonitoringRoutes(router: Router, deps: MonitoringDeps): 
   };
   router.get('/monitor/daily', dailyHandler);
   router.post('/monitor/daily', dailyHandler);
+  // Monthly report read API. Only completed months are reportable.
+  router.get('/metrics/monthly', deps.rateLimiter, async (req, res) => {
+    try {
+      const month = typeof req.query.month === 'string' ? req.query.month : undefined;
+      if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) { res.status(400).json({ ok: false, error: 'month must use YYYY-MM.' }); return; }
+      if (month) { const report = await getStoredMonthlyReport(month); res.json({ ok: true, report }); return; }
+      res.json({ ok: true, reports: await getMonthlyReports(Date.UTC(2000, 0, 1), Date.now() + 1000, 36), storage: storageInfo() });
+    } catch (e) { fail(res, e); }
+  });
+
+  const monthlyHandler = async (req: Request, res: Response) => {
+    const bearer = typeof req.headers.authorization === 'string' && req.headers.authorization.startsWith('Bearer ') ? req.headers.authorization.slice(7).trim() : '';
+    const cron = process.env.CRON_SECRET?.trim();
+    const ok = (req as any).isApiKeyAuthenticated === true || (cron && bearer && deps.safeCompare(bearer, cron));
+    if (!ok) { res.status(401).json({ ok: false, error: 'Administrator key or CRON_SECRET required.' }); return; }
+    try {
+      if (!storageInfo().persistent) { res.status(503).json({ ok: false, error: 'Monthly report archiving requires persistent history storage. Configure the existing Upstash Redis environment variables before enabling monthly reports on Vercel.' }); return; }
+      const month = typeof req.query.month === 'string' ? req.query.month : undefined;
+      res.json({ ok: true, report: await generateAndStoreMonthlyReport(month) });
+    } catch (e: any) { res.status(500).json({ ok: false, error: e?.message || 'Monthly report generation failed.' }); }
+  };
+  router.get('/monitor/monthly', monthlyHandler);
+  router.post('/monitor/monthly', monthlyHandler);
+
 }
